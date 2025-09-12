@@ -257,3 +257,12 @@ security-audit:
 security-fix:
 	@echo "🔧 修复安全漏洞..."
 	npm audit fix
+
+update-docker-compose:
+	cp docker-compose.yml ${HOME}/service/claude-relay/
+
+update-docker-env:
+	cp .env ${HOME}/service/claude-relay/
+
+restart-claude-relay: update-docker-compose
+	cd ${HOME}/service/claude-relay/ && docker compose down claude-relay && docker compose up -d
