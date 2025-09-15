@@ -1,17 +1,12 @@
-version: '3.8'
-
-# Claude Relay Service Docker Compose 配置
-# 所有配置通过环境变量设置，无需映射 .env 文件
-
 services:
   # 🚀 Claude Relay Service
   claude-relay:
     build: .
-    image: weishaw/claude-relay-service:latest
+    image: heishui/claude-relay-service:latest
     restart: unless-stopped
-    ports:
+    # ports:
       # 绑定地址：生产环境建议使用反向代理，设置 BIND_HOST=127.0.0.1
-      - "${BIND_HOST:-0.0.0.0}:${PORT:-3000}:3000"
+      # - "${BIND_HOST:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -101,65 +96,30 @@ services:
       timeout: 10s
       retries: 3
 
-  # 📈 Redis Monitoring (Optional)
-  redis-commander:
-    image: rediscommander/redis-commander:latest
+  # 🔒 Caddy Server
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${REDIS_WEB_PORT:-8081}:8081"
-    environment:
-      - REDIS_HOSTS=local:redis:6379
-    depends_on:
-      - redis
-    networks:
-      - claude-relay-network
-    profiles:
-      - monitoring
-
-  # 📊 Application Monitoring (Optional)
-  prometheus:
-    image: prom/prometheus:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+      - "80:80"
+      - "3000:443"
+      - "3000:443/udp"
     volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - claude-relay-network
-    profiles:
-      - monitoring
-
-  # 📈 Grafana Dashboard (Optional)
-  grafana:
-    image: grafana/grafana:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+      - caddy_data:/data
+      - caddy_config:/config
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./config/grafana:/etc/grafana/provisioning
+      - CADDY_DOMAIN=${CADDY_DOMAIN}
+      - CADDY_EMAIL=${CADDY_EMAIL}
+    command: caddy reverse-proxy --from ${CADDY_DOMAIN} --to claude-relay:3000
     depends_on:
-      - prometheus
+      - claude-relay
     networks:
       - claude-relay-network
-    profiles:
-      - monitoring
-
-volumes:
-  prometheus_data:
-    driver: local
-  grafana_data:
-    driver: local
 
 networks:
   claude-relay-network:
     driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
