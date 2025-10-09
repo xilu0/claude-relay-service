@@ -2103,6 +2103,76 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
   }
 })
 
+// 批量获取 Claude 账户的 OAuth Usage 数据
+router.get('/claude-accounts/usage', authenticateAdmin, async (req, res) => {
+  try {
+    const accounts = await redis.getAllClaudeAccounts()
+    const now = Date.now()
+    const usageCacheTtlMs = 300 * 1000
+
+    // 批量并发获取所有活跃 OAuth 账户的 Usage
+    const usagePromises = accounts.map(async (account) => {
+      // 检查是否为 OAuth 账户：scopes 包含 OAuth 相关权限
+      const scopes = account.scopes && account.scopes.trim() ? account.scopes.split(' ') : []
+      const isOAuth = scopes.includes('user:profile') && scopes.includes('user:inference')
+
+      // 仅为 OAuth 授权的活跃账户调用 usage API
+      if (
+        isOAuth &&
+        account.isActive === 'true' &&
+        account.accessToken &&
+        account.status === 'active'
+      ) {
+        // 若快照在 300 秒内更新，直接使用缓存避免频繁请求
+        const cachedUsage = claudeAccountService.buildClaudeUsageSnapshot(account)
+        const lastUpdatedAt = account.claudeUsageUpdatedAt
+          ? new Date(account.claudeUsageUpdatedAt).getTime()
+          : 0
+        const isCacheFresh = cachedUsage && lastUpdatedAt && now - lastUpdatedAt < usageCacheTtlMs
+        if (isCacheFresh) {
+          return {
+            accountId: account.id,
+            claudeUsage: cachedUsage
+          }
+        }
+
+        try {
+          const usageData = await claudeAccountService.fetchOAuthUsage(account.id)
+          if (usageData) {
+            await claudeAccountService.updateClaudeUsageSnapshot(account.id, usageData)
+          }
+          // 重新读取更新后的数据
+          const updatedAccount = await redis.getClaudeAccount(account.id)
+          return {
+            accountId: account.id,
+            claudeUsage: claudeAccountService.buildClaudeUsageSnapshot(updatedAccount)
+          }
+        } catch (error) {
+          logger.debug(`Failed to fetch OAuth usage for ${account.id}:`, error.message)
+          return { accountId: account.id, claudeUsage: null }
+        }
+      }
+      // Setup Token 账户不调用 usage API，直接返回 null
+      return { accountId: account.id, claudeUsage: null }
+    })
+
+    const results = await Promise.allSettled(usagePromises)
+
+    // 转换为 { accountId: usage } 映射
+    const usageMap = {}
+    results.forEach((result) => {
+      if (result.status === 'fulfilled' && result.value) {
+        usageMap[result.value.accountId] = result.value.claudeUsage
+      }
+    })
+
+    res.json({ success: true, data: usageMap })
+  } catch (error) {
+    logger.error('❌ Failed to fetch Claude accounts usage:', error)
+    res.status(500).json({ error: 'Failed to fetch usage data', message: error.message })
+  }
+})
+
 // 创建新的Claude账户
 router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
   try {
@@ -4092,6 +4162,36 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
       gemini: 'gemini-1.5-flash'
     }
 
+    // 获取账户信息以获取创建时间
+    let accountData = null
+    let accountCreatedAt = null
+
+    try {
+      switch (platform) {
+        case 'claude':
+          accountData = await claudeAccountService.getAccount(accountId)
+          break
+        case 'claude-console':
+          accountData = await claudeConsoleAccountService.getAccount(accountId)
+          break
+        case 'openai':
+          accountData = await openaiAccountService.getAccount(accountId)
+          break
+        case 'openai-responses':
+          accountData = await openaiResponsesAccountService.getAccount(accountId)
+          break
+        case 'gemini':
+          accountData = await geminiAccountService.getAccount(accountId)
+          break
+      }
+
+      if (accountData && accountData.createdAt) {
+        accountCreatedAt = new Date(accountData.createdAt)
+      }
+    } catch (error) {
+      logger.warn(`Failed to get account data for avgDailyCost calculation: ${error.message}`)
+    }
+
     const client = redis.getClientSafe()
     const fallbackModel = fallbackModelMap[platform] || 'unknown'
     const daysCount = Math.min(Math.max(parseInt(days, 10) || 30, 1), 60)
@@ -4211,9 +4311,22 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
       })
     }
 
-    const avgDailyCost = daysCount > 0 ? totalCost / daysCount : 0
-    const avgDailyRequests = daysCount > 0 ? totalRequests / daysCount : 0
-    const avgDailyTokens = daysCount > 0 ? totalTokens / daysCount : 0
+    // 计算实际使用天数（从账户创建到现在）
+    let actualDaysForAvg = daysCount
+    if (accountCreatedAt) {
+      const now = new Date()
+      const diffTime = Math.abs(now - accountCreatedAt)
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+      // 使用实际使用天数，但不超过请求的天数范围
+      actualDaysForAvg = Math.min(diffDays, daysCount)
+      // 至少为1天，避免除零
+      actualDaysForAvg = Math.max(actualDaysForAvg, 1)
+    }
+
+    // 使用实际天数计算日均值
+    const avgDailyCost = actualDaysForAvg > 0 ? totalCost / actualDaysForAvg : 0
+    const avgDailyRequests = actualDaysForAvg > 0 ? totalRequests / actualDaysForAvg : 0
+    const avgDailyTokens = actualDaysForAvg > 0 ? totalTokens / actualDaysForAvg : 0
 
     const todayData = history.length > 0 ? history[history.length - 1] : null
 
@@ -4223,6 +4336,8 @@ router.get('/accounts/:accountId/usage-history', authenticateAdmin, async (req, 
         history,
         summary: {
           days: daysCount,
+          actualDaysUsed: actualDaysForAvg, // 实际使用的天数（用于计算日均值）
+          accountCreatedAt: accountCreatedAt ? accountCreatedAt.toISOString() : null,
           totalCost,
           totalCostFormatted: CostCalculator.formatCost(totalCost),
           totalRequests,
