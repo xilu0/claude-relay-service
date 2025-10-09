@@ -107,12 +107,14 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile
     environment:
       - CADDY_DOMAIN=${CADDY_DOMAIN}
       - CADDY_EMAIL=${CADDY_EMAIL}
-    command: caddy reverse-proxy --from ${CADDY_DOMAIN} --to claude-relay:3000
+    # command: caddy reverse-proxy --from ${CADDY_DOMAIN} --to claude-relay:3000
     depends_on:
       - claude-relay
+      - cc-club-website
     networks:
       - claude-relay-network
 
