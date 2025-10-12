@@ -271,8 +271,10 @@ update-docker-compose:
 update-docker-env:
 	cp .env ${HOME}/service/claude-relay/
 
-restart-claude-relay: update-docker-compose
-	cd ${HOME}/service/claude-relay/ && docker compose down claude-relay && docker compose up -d claude-relay
+restart-claude-relay: 
+	cd ${HOME}/service/claude-relay/ && docker compose up -d claude-relay
+
+update: build-docker update-docker-compose restart-claude-relay
 
 localstart:
 	npm run install:web
