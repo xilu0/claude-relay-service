@@ -7,12 +7,101 @@ const redis = require('../models/redis')
 // const { RateLimiterRedis } = require('rate-limiter-flexible') // 暂时未使用
 const ClientValidator = require('../validators/clientValidator')
 
+const FALLBACK_CONCURRENCY_CONFIG = {
+  leaseSeconds: 300,
+  renewIntervalSeconds: 30,
+  cleanupGraceSeconds: 30
+}
+
+const resolveConcurrencyConfig = () => {
+  if (typeof redis._getConcurrencyConfig === 'function') {
+    return redis._getConcurrencyConfig()
+  }
+
+  const raw = {
+    ...FALLBACK_CONCURRENCY_CONFIG,
+    ...(config.concurrency || {})
+  }
+
+  const toNumber = (value, fallback) => {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) {
+      return fallback
+    }
+    return parsed
+  }
+
+  const leaseSeconds = Math.max(
+    toNumber(raw.leaseSeconds, FALLBACK_CONCURRENCY_CONFIG.leaseSeconds),
+    30
+  )
+
+  let renewIntervalSeconds
+  if (raw.renewIntervalSeconds === 0 || raw.renewIntervalSeconds === '0') {
+    renewIntervalSeconds = 0
+  } else {
+    renewIntervalSeconds = Math.max(
+      toNumber(raw.renewIntervalSeconds, FALLBACK_CONCURRENCY_CONFIG.renewIntervalSeconds),
+      0
+    )
+  }
+
+  const cleanupGraceSeconds = Math.max(
+    toNumber(raw.cleanupGraceSeconds, FALLBACK_CONCURRENCY_CONFIG.cleanupGraceSeconds),
+    0
+  )
+
+  return {
+    leaseSeconds,
+    renewIntervalSeconds,
+    cleanupGraceSeconds
+  }
+}
+
 const TOKEN_COUNT_PATHS = new Set([
   '/v1/messages/count_tokens',
   '/api/v1/messages/count_tokens',
   '/claude/v1/messages/count_tokens',
   '/droid/claude/v1/messages/count_tokens'
 ])
+
+function extractApiKey(req) {
+  const candidates = [
+    req.headers['x-api-key'],
+    req.headers['x-goog-api-key'],
+    req.headers['authorization'],
+    req.headers['api-key'],
+    req.query?.key
+  ]
+
+  for (const candidate of candidates) {
+    let value = candidate
+
+    if (Array.isArray(value)) {
+      value = value.find((item) => typeof item === 'string' && item.trim())
+    }
+
+    if (typeof value !== 'string') {
+      continue
+    }
+
+    let trimmed = value.trim()
+    if (!trimmed) {
+      continue
+    }
+
+    if (/^Bearer\s+/i.test(trimmed)) {
+      trimmed = trimmed.replace(/^Bearer\s+/i, '').trim()
+      if (!trimmed) {
+        continue
+      }
+    }
+
+    return trimmed
+  }
+
+  return ''
+}
 
 function normalizeRequestPath(value) {
   if (!value) {
@@ -44,18 +133,18 @@ const authenticateApiKey = async (req, res, next) => {
 
   try {
     // 安全提取API Key，支持多种格式（包括Gemini CLI支持）
-    const apiKey =
-      req.headers['x-api-key'] ||
-      req.headers['x-goog-api-key'] ||
-      req.headers['authorization']?.replace(/^Bearer\s+/i, '') ||
-      req.headers['api-key'] ||
-      req.query.key
+    const apiKey = extractApiKey(req)
+
+    if (apiKey) {
+      req.headers['x-api-key'] = apiKey
+    }
 
     if (!apiKey) {
       logger.security(`🔒 Missing API key attempt from ${req.ip || 'unknown'}`)
       return res.status(401).json({
         error: 'Missing API key',
-        message: 'Please provide an API key in the x-api-key header or Authorization header'
+        message:
+          'Please provide an API key in the x-api-key, x-goog-api-key, or Authorization header'
       })
     }
 
@@ -116,13 +205,10 @@ const authenticateApiKey = async (req, res, next) => {
     // 检查并发限制
     const concurrencyLimit = validation.keyData.concurrencyLimit || 0
     if (!skipKeyRestrictions && concurrencyLimit > 0) {
-      const concurrencyConfig = config.concurrency || {}
-      const leaseSeconds = Math.max(concurrencyConfig.leaseSeconds || 900, 30)
-      const rawRenewInterval =
-        typeof concurrencyConfig.renewIntervalSeconds === 'number'
-          ? concurrencyConfig.renewIntervalSeconds
-          : 60
-      let renewIntervalSeconds = rawRenewInterval
+      const { leaseSeconds: configLeaseSeconds, renewIntervalSeconds: configRenewIntervalSeconds } =
+        resolveConcurrencyConfig()
+      const leaseSeconds = Math.max(Number(configLeaseSeconds) || 300, 30)
+      let renewIntervalSeconds = configRenewIntervalSeconds
       if (renewIntervalSeconds > 0) {
         const maxSafeRenew = Math.max(leaseSeconds - 5, 15)
         renewIntervalSeconds = Math.min(Math.max(renewIntervalSeconds, 15), maxSafeRenew)
@@ -211,6 +297,29 @@ const authenticateApiKey = async (req, res, next) => {
       req.once('close', () => {
         logger.api(
           `🔌 Request closed for key: ${validation.keyData.id} (${validation.keyData.name})`
+        )
+        decrementConcurrency()
+      })
+
+      req.once('aborted', () => {
+        logger.warn(
+          `⚠️ Request aborted for key: ${validation.keyData.id} (${validation.keyData.name})`
+        )
+        decrementConcurrency()
+      })
+
+      req.once('error', (error) => {
+        logger.error(
+          `❌ Request error for key ${validation.keyData.id} (${validation.keyData.name}):`,
+          error
+        )
+        decrementConcurrency()
+      })
+
+      res.once('error', (error) => {
+        logger.error(
+          `❌ Response error for key ${validation.keyData.id} (${validation.keyData.name}):`,
+          error
         )
         decrementConcurrency()
       })
@@ -879,6 +988,7 @@ const corsMiddleware = (req, res, next) => {
       'Accept',
       'Authorization',
       'x-api-key',
+      'x-goog-api-key',
       'api-key',
       'x-admin-token',
       'anthropic-version',

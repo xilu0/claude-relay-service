@@ -453,7 +453,9 @@ class ClaudeConsoleRelayService {
 
           let buffer = ''
           let finalUsageReported = false
-          const collectedUsageData = {}
+          const collectedUsageData = {
+            model: body.model || account?.defaultModel || null
+          }
 
           // 处理流数据
           response.data.on('data', (chunk) => {
@@ -485,9 +487,12 @@ class ClaudeConsoleRelayService {
 
                 // 解析SSE数据寻找usage信息
                 for (const line of lines) {
-                  if (line.startsWith('data: ') && line.length > 6) {
+                  if (line.startsWith('data:')) {
+                    const jsonStr = line.slice(5).trimStart()
+                    if (!jsonStr || jsonStr === '[DONE]') {
+                      continue
+                    }
                     try {
-                      const jsonStr = line.slice(6)
                       const data = JSON.parse(jsonStr)
 
                       // 收集usage数据
@@ -562,6 +567,9 @@ class ClaudeConsoleRelayService {
                           collectedUsageData.output_tokens !== undefined &&
                           !finalUsageReported
                         ) {
+                          if (!collectedUsageData.model) {
+                            collectedUsageData.model = body.model || account?.defaultModel || null
+                          }
                           logger.info(
                             '🎯 [Console] Complete usage data collected:',
                             JSON.stringify(collectedUsageData)
@@ -631,7 +639,7 @@ class ClaudeConsoleRelayService {
                   }
                   // 确保有 model 字段
                   if (!collectedUsageData.model) {
-                    collectedUsageData.model = body.model
+                    collectedUsageData.model = body.model || account?.defaultModel || null
                   }
                   logger.info(
                     `📊 [Console] Saving incomplete usage data via fallback: ${JSON.stringify(collectedUsageData)}`
