@@ -570,6 +570,38 @@ const authenticateApiKey = async (req, res, next) => {
       }
     }
 
+    // 检查周总成本限制（滚动7天窗口，所有模型）
+    const weeklyCostLimit = validation.keyData.weeklyCostLimit || 0
+    if (weeklyCostLimit > 0) {
+      const weeklyCost = validation.keyData.weeklyCost || 0
+
+      if (weeklyCost >= weeklyCostLimit) {
+        logger.security(
+          `💰 Weekly cost limit exceeded for key: ${validation.keyData.id} (${
+            validation.keyData.name
+          }), cost: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}`
+        )
+
+        // 计算精确的重置时间（基于最早费用记录的时间戳 + 7天）
+        const resetDate = await redis.getWeeklyCostResetTime(validation.keyData.id)
+
+        return res.status(429).json({
+          error: 'Weekly cost limit exceeded',
+          message: `已达到周费用限制 ($${weeklyCostLimit})`,
+          currentCost: weeklyCost,
+          costLimit: weeklyCostLimit,
+          resetAt: resetDate.toISOString(), // 最早费用记录 + 7天（滚动窗口）
+          resetInfo: '滚动7天窗口：最早的费用记录会在7天后自动清除'
+        })
+      }
+
+      // 记录当前周费用使用情况
+      logger.api(
+        `💰 Weekly cost usage for key: ${validation.keyData.id} (${
+          validation.keyData.name
+        }), current: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}`
+      )
+    }
     // 将验证信息添加到请求对象（只包含必要信息）
     req.apiKey = {
       id: validation.keyData.id,
