@@ -865,6 +865,191 @@ class RedisClient {
     return resetTime
   }
 
+  // 🚀 加油包相关方法
+
+  // 🚀 获取加油包已使用金额
+  async getBoosterPackUsed(keyId) {
+    const usedKey = `usage:booster:used:${keyId}`
+    const used = await this.client.get(usedKey)
+    const result = parseFloat(used || 0)
+    logger.debug(`🚀 Getting booster pack used for ${keyId}: $${result}`)
+    return result
+  }
+
+  // 🚀 增加加油包已使用金额
+  async incrementBoosterPackUsed(keyId, amount) {
+    const usedKey = `usage:booster:used:${keyId}`
+
+    // Round to 6 decimal places to prevent floating point drift
+    const roundedAmount = Math.round(amount * 1000000) / 1000000
+
+    logger.debug(
+      `🚀 Incrementing booster pack used for ${keyId}, amount: $${roundedAmount.toFixed(6)}`
+    )
+
+    const newTotal = await this.client.incrbyfloat(usedKey, roundedAmount)
+    // Round the result to prevent accumulated errors
+    const roundedTotal = Math.round(parseFloat(newTotal) * 1000000) / 1000000
+
+    logger.debug(
+      `🚀 Booster pack used incremented successfully, new total: $${roundedTotal.toFixed(6)}`
+    )
+
+    return roundedTotal
+  }
+
+  // 🚀 添加加油包使用记录（Sorted Set存储）
+  async addBoosterPackRecord(keyId, record) {
+    const recordsKey = `usage:booster:records:${keyId}`
+    const { timestamp, amount, model, accountType } = record
+
+    logger.debug(
+      `🚀 Adding booster pack record for ${keyId}: timestamp=${timestamp}, amount=$${amount}, model=${model}`
+    )
+
+    // 使用 Sorted Set 存储，score 为时间戳，value 为 JSON 字符串
+    const value = JSON.stringify({
+      timestamp,
+      amount,
+      model,
+      accountType: accountType || 'unknown'
+    })
+
+    const pipeline = this.client.pipeline()
+    pipeline.zadd(recordsKey, timestamp, value)
+    // 设置过期时间为 90 天（保留历史记录）
+    pipeline.expire(recordsKey, 90 * 24 * 3600)
+
+    await pipeline.exec()
+    logger.debug(`🚀 Booster pack record added successfully for ${keyId}`)
+  }
+
+  // 🚀 获取加油包使用记录（时间范围查询）
+  async getBoosterPackRecords(keyId, startTime = 0, endTime = Date.now()) {
+    const recordsKey = `usage:booster:records:${keyId}`
+
+    logger.debug(
+      `🚀 Getting booster pack records for ${keyId}, range: ${new Date(startTime).toISOString()} - ${new Date(endTime).toISOString()}`
+    )
+
+    // 获取时间范围内的所有记录
+    const records = await this.client.zrangebyscore(recordsKey, startTime, endTime)
+
+    if (!records || records.length === 0) {
+      logger.debug(`🚀 No booster pack records found for ${keyId}`)
+      return []
+    }
+
+    // 解析 JSON 字符串
+    const parsedRecords = records
+      .map((record) => {
+        try {
+          return JSON.parse(record)
+        } catch (error) {
+          logger.error(`Failed to parse booster pack record: ${record}`, error)
+          return null
+        }
+      })
+      .filter((r) => r !== null)
+
+    logger.debug(`🚀 Found ${parsedRecords.length} booster pack records for ${keyId}`)
+    return parsedRecords
+  }
+
+  // 🚀 获取加油包使用统计（按时间聚合）
+  async getBoosterPackStats(keyId, groupBy = 'day') {
+    const now = Date.now()
+
+    // 根据 groupBy 确定时间范围
+    let startTime
+    switch (groupBy) {
+      case 'hour':
+        startTime = now - 24 * 60 * 60 * 1000 // 过去24小时
+        break
+      case 'day':
+        startTime = now - 30 * 24 * 60 * 60 * 1000 // 过去30天
+        break
+      case 'week':
+        startTime = now - 12 * 7 * 24 * 60 * 60 * 1000 // 过去12周
+        break
+      default:
+        startTime = 0 // 全部历史
+    }
+
+    const records = await this.getBoosterPackRecords(keyId, startTime, now)
+
+    if (records.length === 0) {
+      return {
+        totalAmount: 0,
+        recordCount: 0,
+        byPeriod: {},
+        byModel: {}
+      }
+    }
+
+    // 按时间段和模型聚合
+    const byPeriod = {}
+    const byModel = {}
+    let totalAmount = 0
+
+    for (const record of records) {
+      totalAmount += record.amount
+
+      // 按时间段聚合
+      const date = new Date(record.timestamp)
+      let periodKey
+      switch (groupBy) {
+        case 'hour':
+          periodKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')} ${String(date.getUTCHours()).padStart(2, '0')}:00`
+          break
+        case 'day':
+          periodKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+          break
+        case 'week': {
+          // ISO 8601 week calculation
+          const weekStart = new Date(date)
+          weekStart.setUTCDate(date.getUTCDate() - date.getUTCDay())
+          weekStart.setUTCHours(0, 0, 0, 0)
+
+          // Get ISO week number
+          const yearStart = new Date(Date.UTC(weekStart.getUTCFullYear(), 0, 1))
+          const weekNo = Math.ceil((weekStart - yearStart) / (7 * 24 * 60 * 60 * 1000) + 1)
+
+          periodKey = `${weekStart.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+          break
+        }
+        default:
+          periodKey = 'all'
+      }
+
+      byPeriod[periodKey] = (byPeriod[periodKey] || 0) + record.amount
+
+      // 按模型聚合
+      const modelKey = record.model || 'unknown'
+      byModel[modelKey] = (byModel[modelKey] || 0) + record.amount
+    }
+
+    return {
+      totalAmount,
+      recordCount: records.length,
+      byPeriod,
+      byModel
+    }
+  }
+
+  // 🚀 重置加油包使用记录
+  async resetBoosterPackUsed(keyId) {
+    const usedKey = `usage:booster:used:${keyId}`
+    const recordsKey = `usage:booster:records:${keyId}`
+
+    logger.debug(`🚀 Resetting booster pack for ${keyId}`)
+
+    // 删除已使用金额和使用记录
+    await Promise.all([this.client.del(usedKey), this.client.del(recordsKey)])
+
+    logger.debug(`🚀 Booster pack reset successfully for ${keyId}`)
+  }
+
   // 💰 计算账户的每日费用（基于模型使用）
   async getAccountDailyCost(accountId) {
     const CostCalculator = require('../utils/costCalculator')

@@ -600,7 +600,8 @@ const handleResponses = async (req, res) => {
             0, // OpenAI没有cache_creation_tokens
             cacheReadTokens,
             actualModel,
-            accountId
+            accountId,
+            req.useBooster || false // 传递是否使用加油包
           )
 
           logger.info(
@@ -732,7 +733,8 @@ const handleResponses = async (req, res) => {
             0, // OpenAI没有cache_creation_tokens
             cacheReadTokens,
             modelToRecord,
-            accountId
+            accountId,
+            req.useBooster || false // 传递是否使用加油包
           )
 
           logger.info(

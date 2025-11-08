@@ -1697,6 +1697,145 @@ router.delete('/api-keys/:keyId/permanent', authenticateAdmin, async (req, res) 
   }
 })
 
+// 🚀 获取API Key的加油包使用记录
+router.get('/api-keys/:keyId/booster-pack/records', authenticateAdmin, async (req, res) => {
+  try {
+    const { keyId } = req.params
+    const { startTime, endTime } = req.query
+
+    // Validate and sanitize time parameters
+    const start = startTime ? Math.max(0, parseInt(startTime, 10)) : 0
+    const end = endTime ? Math.max(0, parseInt(endTime, 10)) : Date.now()
+
+    // Additional validation
+    if (isNaN(start) || isNaN(end) || start < 0 || end < 0 || start > end) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid time range parameters',
+        message: 'startTime and endTime must be valid timestamps with startTime <= endTime'
+      })
+    }
+
+    // Prevent excessively large time ranges (e.g., more than 1 year)
+    const maxTimeRange = 365 * 24 * 60 * 60 * 1000 // 1 year in milliseconds
+    if (end - start > maxTimeRange) {
+      return res.status(400).json({
+        success: false,
+        error: 'Time range too large',
+        message: 'Time range cannot exceed 1 year'
+      })
+    }
+
+    const records = await redis.getBoosterPackRecords(keyId, start, end)
+
+    return res.json({
+      success: true,
+      records
+    })
+  } catch (error) {
+    logger.error('❌ Failed to get booster pack records:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    })
+  }
+})
+
+// 🚀 获取API Key的加油包使用统计
+router.get('/api-keys/:keyId/booster-pack/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const { keyId } = req.params
+    const { groupBy = 'day' } = req.query
+
+    const stats = await redis.getBoosterPackStats(keyId, groupBy)
+
+    return res.json({
+      success: true,
+      stats
+    })
+  } catch (error) {
+    logger.error('❌ Failed to get booster pack stats:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    })
+  }
+})
+
+// 🚀 设置/充值API Key的加油包金额
+router.put('/api-keys/:keyId/booster-pack', authenticateAdmin, async (req, res) => {
+  try {
+    const { keyId } = req.params
+    const { amount } = req.body
+    const adminUsername = req.session?.admin?.username || 'unknown'
+
+    // Comprehensive input validation
+    const parsedAmount = parseFloat(amount)
+
+    if (
+      amount === null ||
+      amount === undefined ||
+      isNaN(parsedAmount) ||
+      !isFinite(parsedAmount) ||
+      parsedAmount < 0 ||
+      parsedAmount > 100000 // Set reasonable upper limit
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid booster pack amount',
+        message: 'Amount must be a number between 0 and 100000'
+      })
+    }
+
+    // 更新API Key的加油包金额
+    await apiKeyService.updateApiKey(keyId, {
+      boosterPackAmount: parsedAmount
+    })
+
+    logger.success(
+      `🚀 Admin ${adminUsername} set booster pack for API key ${keyId}: $${parsedAmount.toFixed(2)}`
+    )
+
+    return res.json({
+      success: true,
+      message: `成功设置加油包金额: $${parsedAmount.toFixed(2)}`
+    })
+  } catch (error) {
+    logger.error('❌ Failed to set booster pack amount:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    })
+  }
+})
+
+// 🚀 重置API Key的加油包使用记录
+router.post('/api-keys/:keyId/booster-pack/reset', authenticateAdmin, async (req, res) => {
+  try {
+    const { keyId } = req.params
+    const adminUsername = req.session?.admin?.username || 'unknown'
+
+    await redis.resetBoosterPackUsed(keyId)
+
+    logger.success(`🚀 Admin ${adminUsername} reset booster pack usage for API key ${keyId}`)
+
+    return res.json({
+      success: true,
+      message: '成功重置加油包使用记录'
+    })
+  } catch (error) {
+    logger.error('❌ Failed to reset booster pack usage:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    })
+  }
+})
+
 // 🧹 清空所有已删除的API Keys
 router.delete('/api-keys/deleted/clear-all', authenticateAdmin, async (req, res) => {
   try {

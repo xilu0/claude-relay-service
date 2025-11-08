@@ -639,7 +639,8 @@ async function handleMessagesRequest(req, res) {
             cacheCreateTokens,
             cacheReadTokens,
             model,
-            responseAccountId
+            responseAccountId,
+            req.useBooster || false // 传递是否使用加油包
           )
 
           await queueRateLimitUpdate(
