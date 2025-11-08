@@ -597,7 +597,7 @@
                             variant="compact"
                           />
 
-                          <!-- 周总成本限制进度条（滚动7天窗口） -->
+                          <!-- 周费用限制进度条（滚动7天窗口） -->
                           <LimitProgressBar
                             v-if="key.weeklyCostLimit > 0"
                             :current="key.weeklyCost || 0"
@@ -1326,7 +1326,7 @@
                     variant="compact"
                   />
 
-                  <!-- 周总成本限制进度条（滚动7天窗口） -->
+                  <!-- 周费用限制进度条（滚动7天窗口） -->
                   <LimitProgressBar
                     v-if="key.weeklyCostLimit > 0"
                     :current="key.weeklyCost || 0"

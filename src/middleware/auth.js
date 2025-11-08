@@ -570,7 +570,7 @@ const authenticateApiKey = async (req, res, next) => {
       }
     }
 
-    // 检查周总成本限制（滚动7天窗口，所有模型）
+    // 检查周费用限制（滚动7天窗口，所有模型）
     const weeklyCostLimit = validation.keyData.weeklyCostLimit || 0
     if (weeklyCostLimit > 0) {
       const weeklyCost = validation.keyData.weeklyCost || 0

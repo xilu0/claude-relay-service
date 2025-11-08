@@ -337,6 +337,56 @@
 
           <div>
             <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+              >周费用限制 (美元)</label
+            >
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '200'"
+                >
+                  $200
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '500'"
+                >
+                  $500
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '1000'"
+                >
+                  $1000
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = ''"
+                >
+                  自定义
+                </button>
+              </div>
+              <input
+                v-model="form.weeklyCostLimit"
+                class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                min="0"
+                placeholder="0 表示无限制"
+                step="0.01"
+                type="number"
+              />
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                设置此 API Key 的滚动7天窗口内的总费用限制（所有模型），超过限制将拒绝请求，0
+                或留空表示无限制
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
               >总费用限制 (美元)</label
             >
             <div class="space-y-2">
@@ -429,57 +479,6 @@
               />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 设置 Opus 模型的周费用限制（周一到周日），仅限 Claude 官方账户，0 或留空表示无限制
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >周总成本限制 (滚动7天) (可选)</label
-            >
-            <div
-              class="rounded-xl border border-gray-200 bg-gradient-to-br from-cyan-50 to-blue-50 p-4 dark:border-gray-700 dark:from-cyan-900/20 dark:to-blue-900/20"
-            >
-              <div class="mb-3 flex flex-wrap gap-2">
-                <button
-                  class="flex-1 rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-700 transition-all hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
-                  type="button"
-                  @click="form.weeklyCostLimit = '200'"
-                >
-                  $200
-                </button>
-                <button
-                  class="flex-1 rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-700 transition-all hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
-                  type="button"
-                  @click="form.weeklyCostLimit = '500'"
-                >
-                  $500
-                </button>
-                <button
-                  class="flex-1 rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-700 transition-all hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
-                  type="button"
-                  @click="form.weeklyCostLimit = '1000'"
-                >
-                  $1000
-                </button>
-                <button
-                  class="flex-1 rounded-lg border border-cyan-300 bg-white px-4 py-2 text-sm font-semibold text-cyan-700 transition-all hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/30"
-                  type="button"
-                  @click="form.weeklyCostLimit = ''"
-                >
-                  自定义
-                </button>
-              </div>
-              <input
-                v-model="form.weeklyCostLimit"
-                class="form-input w-full border-cyan-200 bg-white dark:border-cyan-700 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-400"
-                min="0"
-                placeholder="0 表示无限制"
-                step="0.01"
-                type="number"
-              />
-              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                设置滚动7天窗口内的总费用限制（所有模型），超过限制将拒绝请求，0 或留空表示无限制
               </p>
             </div>
           </div>
