@@ -7,7 +7,7 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : 0
 }
 
-async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
+async function updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBooster = false) {
   if (!rateLimitInfo) {
     return { totalTokens: 0, totalCost: 0 }
   }
@@ -24,7 +24,8 @@ async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
 
   const totalTokens = inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
 
-  if (totalTokens > 0 && rateLimitInfo.tokenCountKey) {
+  // 使用加油包时，不更新时间窗口的 token 计数
+  if (totalTokens > 0 && rateLimitInfo.tokenCountKey && !useBooster) {
     await client.incrby(rateLimitInfo.tokenCountKey, Math.round(totalTokens))
   }
 
@@ -59,7 +60,8 @@ async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
     }
   }
 
-  if (totalCost > 0 && rateLimitInfo.costCountKey) {
+  // 使用加油包时，不更新时间窗口的成本计数
+  if (totalCost > 0 && rateLimitInfo.costCountKey && !useBooster) {
     await client.incrbyfloat(rateLimitInfo.costCountKey, totalCost)
   }
 

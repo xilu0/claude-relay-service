@@ -431,23 +431,40 @@ const authenticateApiKey = async (req, res, next) => {
       } else if (rateLimitCost > 0) {
         // 使用费用限制（新功能）
         if (currentCost >= rateLimitCost) {
-          const resetTime = new Date(windowStart + windowDuration)
-          const remainingMinutes = Math.ceil((resetTime - now) / 60000)
+          // 检查是否有加油包额度
+          const boosterPackAmount = validation.keyData.boosterPackAmount || 0
+          const boosterPackUsed = validation.keyData.boosterPackUsed || 0
+          const boosterPackRemaining = boosterPackAmount - boosterPackUsed
 
-          logger.security(
-            `💰 Rate limit exceeded (cost) for key: ${validation.keyData.id} (${
-              validation.keyData.name
-            }), cost: $${currentCost.toFixed(2)}/$${rateLimitCost}`
-          )
+          if (boosterPackAmount > 0 && boosterPackRemaining > 0) {
+            // 有加油包额度，允许继续使用
+            logger.api(
+              `🚀 Rate limit (cost) reached for key: ${validation.keyData.id} (${validation.keyData.name}), using booster pack. Remaining: $${boosterPackRemaining.toFixed(2)}`
+            )
+            // 标记使用加油包
+            req.useBooster = true
+          } else {
+            // 无加油包或已用完
+            const resetTime = new Date(windowStart + windowDuration)
+            const remainingMinutes = Math.ceil((resetTime - now) / 60000)
 
-          return res.status(429).json({
-            error: 'Rate limit exceeded',
-            message: `已达到费用限制 ($${rateLimitCost})，将在 ${remainingMinutes} 分钟后重置`,
-            currentCost,
-            costLimit: rateLimitCost,
-            resetAt: resetTime.toISOString(),
-            remainingMinutes
-          })
+            logger.security(
+              `💰 Rate limit exceeded (cost) for key: ${validation.keyData.id} (${
+                validation.keyData.name
+              }), cost: $${currentCost.toFixed(2)}/$${rateLimitCost}, booster exhausted`
+            )
+
+            return res.status(429).json({
+              error: 'Rate limit exceeded',
+              message: `已达到费用限制 ($${rateLimitCost})${boosterPackAmount > 0 ? '且加油包已用完' : ''}，将在 ${remainingMinutes} 分钟后重置`,
+              currentCost,
+              costLimit: rateLimitCost,
+              boosterPackAmount,
+              boosterPackUsed,
+              resetAt: resetTime.toISOString(),
+              remainingMinutes
+            })
+          }
         }
       }
 
@@ -570,36 +587,53 @@ const authenticateApiKey = async (req, res, next) => {
       }
     }
 
-    // 检查周总成本限制（滚动7天窗口，所有模型）
+    // 检查周费用限制（滚动7天窗口，所有模型）
     const weeklyCostLimit = validation.keyData.weeklyCostLimit || 0
     if (weeklyCostLimit > 0) {
       const weeklyCost = validation.keyData.weeklyCost || 0
 
       if (weeklyCost >= weeklyCostLimit) {
-        logger.security(
-          `💰 Weekly cost limit exceeded for key: ${validation.keyData.id} (${
-            validation.keyData.name
-          }), cost: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}`
-        )
+        // 检查是否有加油包额度
+        const boosterPackAmount = validation.keyData.boosterPackAmount || 0
+        const boosterPackUsed = validation.keyData.boosterPackUsed || 0
+        const boosterPackRemaining = boosterPackAmount - boosterPackUsed
 
-        // 计算精确的重置时间（基于最早费用记录的时间戳 + 7天）
-        const resetDate = await redis.getWeeklyCostResetTime(validation.keyData.id)
+        if (boosterPackAmount > 0 && boosterPackRemaining > 0) {
+          // 有加油包额度，允许继续使用
+          logger.api(
+            `🚀 Weekly cost limit reached for key: ${validation.keyData.id} (${validation.keyData.name}), using booster pack. Remaining: $${boosterPackRemaining.toFixed(2)}`
+          )
+          // 标记使用加油包
+          req.useBooster = true
+        } else {
+          // 无加油包或已用完
+          logger.security(
+            `💰 Weekly cost limit exceeded for key: ${validation.keyData.id} (${
+              validation.keyData.name
+            }), cost: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}, booster exhausted`
+          )
 
-        return res.status(429).json({
-          error: 'Weekly cost limit exceeded',
-          message: `已达到周费用限制 ($${weeklyCostLimit})`,
-          currentCost: weeklyCost,
-          costLimit: weeklyCostLimit,
-          resetAt: resetDate.toISOString(), // 最早费用记录 + 7天（滚动窗口）
-          resetInfo: '滚动7天窗口：最早的费用记录会在7天后自动清除'
-        })
+          // 计算精确的重置时间（基于最早费用记录的时间戳 + 7天）
+          const resetDate = await redis.getWeeklyCostResetTime(validation.keyData.id)
+
+          return res.status(429).json({
+            error: 'Weekly cost limit exceeded',
+            message: `已达到周费用限制 ($${weeklyCostLimit})${boosterPackAmount > 0 ? '且加油包已用完' : ''}`,
+            currentCost: weeklyCost,
+            costLimit: weeklyCostLimit,
+            boosterPackAmount,
+            boosterPackUsed,
+            resetAt: resetDate.toISOString(), // 最早费用记录 + 7天（滚动窗口）
+            resetInfo: '滚动7天窗口：最早的费用记录会在7天后自动清除'
+          })
+        }
       }
 
       // 记录当前周费用使用情况
       logger.api(
         `💰 Weekly cost usage for key: ${validation.keyData.id} (${
           validation.keyData.name
-        }), current: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}`
+        }), current: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}${req.useBooster ? ' (using booster pack)' : ''}`
       )
     }
     // 将验证信息添加到请求对象（只包含必要信息）
@@ -626,6 +660,9 @@ const authenticateApiKey = async (req, res, next) => {
       dailyCost: validation.keyData.dailyCost,
       totalCostLimit: validation.keyData.totalCostLimit,
       totalCost: validation.keyData.totalCost,
+      boosterPackAmount: validation.keyData.boosterPackAmount, // 加油包总金额
+      boosterPackUsed: validation.keyData.boosterPackUsed, // 加油包已使用金额
+      useBooster: req.useBooster || false, // 是否使用加油包
       usage: validation.keyData.usage
     }
     req.usage = validation.keyData.usage

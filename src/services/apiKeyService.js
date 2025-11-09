@@ -94,6 +94,7 @@ class ApiKeyService {
       totalCostLimit = 0,
       weeklyOpusCostLimit = 0,
       weeklyCostLimit = 0,
+      boosterPackAmount = 0, // 新增：加油包金额
       tags = [],
       activationDays = 0, // 新增：激活后有效天数（0表示不使用此功能）
       activationUnit = 'days', // 新增：激活时间单位 'hours' 或 'days'
@@ -133,6 +134,7 @@ class ApiKeyService {
       totalCostLimit: String(totalCostLimit || 0),
       weeklyOpusCostLimit: String(weeklyOpusCostLimit || 0),
       weeklyCostLimit: String(weeklyCostLimit || 0),
+      boosterPackAmount: String(boosterPackAmount || 0), // 新增：加油包金额
       tags: JSON.stringify(tags || []),
       activationDays: String(activationDays || 0), // 新增：激活后有效天数
       activationUnit: activationUnit || 'days', // 新增：激活时间单位
@@ -180,6 +182,7 @@ class ApiKeyService {
       totalCostLimit: parseFloat(keyData.totalCostLimit || 0),
       weeklyOpusCostLimit: parseFloat(keyData.weeklyOpusCostLimit || 0),
       weeklyCostLimit: parseFloat(keyData.weeklyCostLimit || 0),
+      boosterPackAmount: parseFloat(keyData.boosterPackAmount || 0), // 新增：加油包金额
       tags: JSON.parse(keyData.tags || '[]'),
       activationDays: parseInt(keyData.activationDays || 0),
       activationUnit: keyData.activationUnit || 'days',
@@ -269,10 +272,11 @@ class ApiKeyService {
       // 获取使用统计（供返回数据使用）
       const usage = await redis.getUsageStats(keyData.id)
 
-      // 获取费用统计
-      const [dailyCost, costStats] = await Promise.all([
+      // 获取费用统计（包括加油包使用量）
+      const [dailyCost, costStats, boosterPackUsed] = await Promise.all([
         redis.getDailyCost(keyData.id),
-        redis.getCostStats(keyData.id)
+        redis.getCostStats(keyData.id),
+        redis.getBoosterPackUsed(keyData.id)
       ])
       const totalCost = costStats?.total || 0
 
@@ -334,6 +338,8 @@ class ApiKeyService {
           totalCostLimit: parseFloat(keyData.totalCostLimit || 0),
           weeklyOpusCostLimit: parseFloat(keyData.weeklyOpusCostLimit || 0),
           weeklyCostLimit: parseFloat(keyData.weeklyCostLimit || 0),
+          boosterPackAmount: parseFloat(keyData.boosterPackAmount || 0), // 加油包总金额
+          boosterPackUsed: boosterPackUsed || 0, // 加油包已使用金额
           dailyCost: dailyCost || 0,
           totalCost,
           weeklyOpusCost: (await redis.getWeeklyOpusCost(keyData.id)) || 0,
@@ -395,10 +401,11 @@ class ApiKeyService {
         }
       }
 
-      // 获取当日费用
-      const [dailyCost, costStats] = await Promise.all([
+      // 获取当日费用（包括加油包使用量）
+      const [dailyCost, costStats, boosterPackUsed] = await Promise.all([
         redis.getDailyCost(keyData.id),
-        redis.getCostStats(keyData.id)
+        redis.getCostStats(keyData.id),
+        redis.getBoosterPackUsed(keyData.id)
       ])
 
       // 获取使用统计
@@ -463,6 +470,8 @@ class ApiKeyService {
           totalCostLimit: parseFloat(keyData.totalCostLimit || 0),
           weeklyOpusCostLimit: parseFloat(keyData.weeklyOpusCostLimit || 0),
           weeklyCostLimit: parseFloat(keyData.weeklyCostLimit || 0),
+          boosterPackAmount: parseFloat(keyData.boosterPackAmount || 0), // 加油包总金额
+          boosterPackUsed: boosterPackUsed || 0, // 加油包已使用金额
           dailyCost: dailyCost || 0,
           totalCost: costStats?.total || 0,
           weeklyOpusCost: (await redis.getWeeklyOpusCost(keyData.id)) || 0,
@@ -514,6 +523,8 @@ class ApiKeyService {
         key.totalCostLimit = parseFloat(key.totalCostLimit || 0)
         key.weeklyOpusCostLimit = parseFloat(key.weeklyOpusCostLimit || 0)
         key.weeklyCostLimit = parseFloat(key.weeklyCostLimit || 0)
+        key.boosterPackAmount = parseFloat(key.boosterPackAmount || 0) // 加油包总金额
+        key.boosterPackUsed = (await redis.getBoosterPackUsed(key.id)) || 0 // 加油包已使用金额
         key.dailyCost = (await redis.getDailyCost(key.id)) || 0
         key.weeklyOpusCost = (await redis.getWeeklyOpusCost(key.id)) || 0
         key.weeklyCost = (await redis.getWeeklyCost(key.id)) || 0
@@ -683,6 +694,7 @@ class ApiKeyService {
         'totalCostLimit',
         'weeklyOpusCostLimit',
         'weeklyCostLimit',
+        'boosterPackAmount', // 新增：加油包金额
         'tags',
         'userId', // 新增：用户ID（所有者变更）
         'userUsername', // 新增：用户名（所有者变更）
@@ -900,7 +912,8 @@ class ApiKeyService {
     cacheCreateTokens = 0,
     cacheReadTokens = 0,
     model = 'unknown',
-    accountId = null
+    accountId = null,
+    useBooster = false // 新增：是否使用加油包
   ) {
     try {
       const totalTokens = inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
@@ -940,10 +953,62 @@ class ApiKeyService {
 
       // 记录费用统计
       if (costInfo.costs.total > 0) {
-        await redis.incrementDailyCost(keyId, costInfo.costs.total)
-        logger.database(
-          `💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`
-        )
+        // 检查是否使用加油包
+        if (useBooster) {
+          // Get current used amount and limit BEFORE incrementing (防止竞态条件)
+          const currentUsed = await redis.getBoosterPackUsed(keyId)
+          const keyData = await redis.getApiKey(keyId)
+          const boosterPackAmount = parseFloat(keyData.boosterPackAmount || 0)
+
+          // Check if adding this cost would exceed the limit
+          if (currentUsed + costInfo.costs.total > boosterPackAmount) {
+            const allowedAmount = Math.max(0, boosterPackAmount - currentUsed)
+            logger.warn(
+              `⚠️ Booster pack would be exceeded for ${keyId}. Cost: $${costInfo.costs.total.toFixed(6)}, Allowed: $${allowedAmount.toFixed(6)}, Current: $${currentUsed.toFixed(6)}, Limit: $${boosterPackAmount.toFixed(2)}`
+            )
+
+            // Only charge what's remaining in booster, rest goes to normal cost
+            if (allowedAmount > 0) {
+              await redis.incrementBoosterPackUsed(keyId, allowedAmount)
+              await redis.addBoosterPackRecord(keyId, {
+                timestamp: Date.now(),
+                amount: allowedAmount,
+                model,
+                accountType: accountId ? 'account' : 'unknown'
+              })
+              logger.database(
+                `🚀 Recorded partial booster usage for ${keyId}: $${allowedAmount.toFixed(6)}`
+              )
+            }
+
+            // Charge the excess to normal cost
+            const excessCost = costInfo.costs.total - allowedAmount
+            if (excessCost > 0) {
+              await redis.incrementDailyCost(keyId, excessCost)
+              logger.database(
+                `💰 Excess cost to normal for ${keyId}: $${excessCost.toFixed(6)}, model: ${model}`
+              )
+            }
+          } else {
+            // Normal booster pack usage - within limit
+            await redis.incrementBoosterPackUsed(keyId, costInfo.costs.total)
+            await redis.addBoosterPackRecord(keyId, {
+              timestamp: Date.now(),
+              amount: costInfo.costs.total,
+              model,
+              accountType: accountId ? 'account' : 'unknown'
+            })
+            logger.database(
+              `🚀 Recorded booster pack usage for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`
+            )
+          }
+        } else {
+          // 正常费用，不使用加油包
+          await redis.incrementDailyCost(keyId, costInfo.costs.total)
+          logger.database(
+            `💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`
+          )
+        }
       } else {
         logger.debug(`💰 No cost recorded for ${keyId} - zero cost for model: ${model}`)
       }
@@ -1042,7 +1107,8 @@ class ApiKeyService {
     usageObject,
     model = 'unknown',
     accountId = null,
-    accountType = null
+    accountType = null,
+    useBooster = false // 新增：是否使用加油包
   ) {
     try {
       // 提取 token 数量
@@ -1130,15 +1196,70 @@ class ApiKeyService {
 
       // 记录费用统计
       if (costInfo.totalCost > 0) {
-        await redis.incrementDailyCost(keyId, costInfo.totalCost)
-        // 记录周成本（滚动7天窗口）
-        await redis.incrementWeeklyCost(keyId, costInfo.totalCost)
-        logger.database(
-          `💰 Recorded cost for ${keyId}: $${costInfo.totalCost.toFixed(6)}, model: ${model}`
-        )
+        // 检查是否使用加油包
+        if (useBooster) {
+          // Get current used amount and limit BEFORE incrementing (防止竞态条件)
+          const currentUsed = await redis.getBoosterPackUsed(keyId)
+          const keyData = await redis.getApiKey(keyId)
+          const boosterPackAmount = parseFloat(keyData.boosterPackAmount || 0)
 
-        // 记录 Opus 周费用（如果适用）
-        await this.recordOpusCost(keyId, costInfo.totalCost, model, accountType)
+          // Check if adding this cost would exceed the limit
+          if (currentUsed + costInfo.totalCost > boosterPackAmount) {
+            const allowedAmount = Math.max(0, boosterPackAmount - currentUsed)
+            logger.warn(
+              `⚠️ Booster pack would be exceeded for ${keyId}. Cost: $${costInfo.totalCost.toFixed(6)}, Allowed: $${allowedAmount.toFixed(6)}, Current: $${currentUsed.toFixed(6)}, Limit: $${boosterPackAmount.toFixed(2)}`
+            )
+
+            // Only charge what's remaining in booster, rest goes to normal cost
+            if (allowedAmount > 0) {
+              await redis.incrementBoosterPackUsed(keyId, allowedAmount)
+              await redis.addBoosterPackRecord(keyId, {
+                timestamp: Date.now(),
+                amount: allowedAmount,
+                model,
+                accountType: accountType || 'unknown'
+              })
+              logger.database(
+                `🚀 Recorded partial booster usage for ${keyId}: $${allowedAmount.toFixed(6)}`
+              )
+            }
+
+            // Charge the excess to normal cost
+            const excessCost = costInfo.totalCost - allowedAmount
+            if (excessCost > 0) {
+              await redis.incrementDailyCost(keyId, excessCost)
+              await redis.incrementWeeklyCost(keyId, excessCost)
+              logger.database(
+                `💰 Excess cost to normal for ${keyId}: $${excessCost.toFixed(6)}, model: ${model}`
+              )
+            }
+          } else {
+            // Normal booster pack usage - within limit
+            await redis.incrementBoosterPackUsed(keyId, costInfo.totalCost)
+            await redis.addBoosterPackRecord(keyId, {
+              timestamp: Date.now(),
+              amount: costInfo.totalCost,
+              model,
+              accountType: accountType || 'unknown'
+            })
+            logger.database(
+              `🚀 Recorded booster pack usage for ${keyId}: $${costInfo.totalCost.toFixed(6)}, model: ${model}`
+            )
+          }
+        } else {
+          // 正常费用，不使用加油包
+          await redis.incrementDailyCost(keyId, costInfo.totalCost)
+          // 记录周成本（滚动7天窗口）
+          await redis.incrementWeeklyCost(keyId, costInfo.totalCost)
+          logger.database(
+            `💰 Recorded cost for ${keyId}: $${costInfo.totalCost.toFixed(6)}, model: ${model}`
+          )
+        }
+
+        // 记录 Opus 周费用（如果适用，且非加油包）
+        if (!useBooster) {
+          await this.recordOpusCost(keyId, costInfo.totalCost, model, accountType)
+        }
 
         // 记录详细的缓存费用（如果有）
         if (costInfo.ephemeral5mCost > 0 || costInfo.ephemeral1hCost > 0) {

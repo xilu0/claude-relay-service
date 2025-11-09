@@ -14,14 +14,20 @@ const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
 const router = express.Router()
 
-function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
+function queueRateLimitUpdate(
+  rateLimitInfo,
+  usageSummary,
+  model,
+  context = '',
+  useBooster = false
+) {
   if (!rateLimitInfo) {
     return Promise.resolve({ totalTokens: 0, totalCost: 0 })
   }
 
   const label = context ? ` (${context})` : ''
 
-  return updateRateLimitCounters(rateLimitInfo, usageSummary, model)
+  return updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBooster)
     .then(({ totalTokens, totalCost }) => {
       if (totalTokens > 0) {
         logger.api(`📊 Updated rate limit token count${label}: +${totalTokens} tokens`)
@@ -213,7 +219,14 @@ async function handleMessagesRequest(req, res) {
               }
 
               apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'claude')
+                .recordUsageWithDetails(
+                  req.apiKey.id,
+                  usageObject,
+                  model,
+                  usageAccountId,
+                  'claude',
+                  req.apiKey.useBooster
+                )
                 .catch((error) => {
                   logger.error('❌ Failed to record stream usage:', error)
                 })
@@ -227,7 +240,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'claude-stream'
+                'claude-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -303,7 +317,8 @@ async function handleMessagesRequest(req, res) {
                   usageObject,
                   model,
                   usageAccountId,
-                  'claude-console'
+                  'claude-console',
+                  req.apiKey.useBooster
                 )
                 .catch((error) => {
                   logger.error('❌ Failed to record stream usage:', error)
@@ -318,7 +333,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'claude-console-stream'
+                'claude-console-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -354,7 +370,16 @@ async function handleMessagesRequest(req, res) {
             const outputTokens = result.usage.output_tokens || 0
 
             apiKeyService
-              .recordUsage(req.apiKey.id, inputTokens, outputTokens, 0, 0, result.model, accountId)
+              .recordUsage(
+                req.apiKey.id,
+                inputTokens,
+                outputTokens,
+                0,
+                0,
+                result.model,
+                accountId,
+                req.apiKey.useBooster
+              )
               .catch((error) => {
                 logger.error('❌ Failed to record Bedrock stream usage:', error)
               })
@@ -368,7 +393,8 @@ async function handleMessagesRequest(req, res) {
                 cacheReadTokens: 0
               },
               result.model,
-              'bedrock-stream'
+              'bedrock-stream',
+              req.apiKey.useBooster
             )
 
             usageDataCaptured = true
@@ -439,7 +465,14 @@ async function handleMessagesRequest(req, res) {
               }
 
               apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'ccr')
+                .recordUsageWithDetails(
+                  req.apiKey.id,
+                  usageObject,
+                  model,
+                  usageAccountId,
+                  'ccr',
+                  req.apiKey.useBooster
+                )
                 .catch((error) => {
                   logger.error('❌ Failed to record CCR stream usage:', error)
                 })
@@ -453,7 +486,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'ccr-stream'
+                'ccr-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -639,7 +673,8 @@ async function handleMessagesRequest(req, res) {
             cacheCreateTokens,
             cacheReadTokens,
             model,
-            responseAccountId
+            responseAccountId,
+            req.apiKey.useBooster || false // 传递是否使用加油包
           )
 
           await queueRateLimitUpdate(
@@ -651,7 +686,8 @@ async function handleMessagesRequest(req, res) {
               cacheReadTokens
             },
             model,
-            'claude-non-stream'
+            'claude-non-stream',
+            req.apiKey.useBooster
           )
 
           usageRecorded = true
