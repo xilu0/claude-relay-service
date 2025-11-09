@@ -272,9 +272,9 @@ update-docker-env:
 	cp .env ${HOME}/service/claude-relay/
 
 restart-claude-relay: 
-	cd ${HOME}/service/claude-relay/ && docker compose up -d claude-relay
+	ssh cc "cd /home/ubuntu/cc-club && docker compose up --pull always -d claude-relay"
 
-update: build-docker update-docker-compose restart-claude-relay
+update: build-docker restart-claude-relay
 
 localstart:
 	npm run install:web
