@@ -68,7 +68,7 @@ function extractCodexUsageHeaders(headers) {
   return hasData ? snapshot : null
 }
 
-async function applyRateLimitTracking(req, usageSummary, model, context = '') {
+async function applyRateLimitTracking(req, usageSummary, model, context = '', useBooster = false) {
   if (!req.rateLimitInfo) {
     return
   }
@@ -79,7 +79,8 @@ async function applyRateLimitTracking(req, usageSummary, model, context = '') {
     const { totalTokens, totalCost } = await updateRateLimitCounters(
       req.rateLimitInfo,
       usageSummary,
-      model
+      model,
+      useBooster
     )
 
     if (totalTokens > 0) {
@@ -601,7 +602,7 @@ const handleResponses = async (req, res) => {
             cacheReadTokens,
             actualModel,
             accountId,
-            req.useBooster || false // 传递是否使用加油包
+            apiKeyData.useBooster || false // 传递是否使用加油包
           )
 
           logger.info(
@@ -617,7 +618,8 @@ const handleResponses = async (req, res) => {
               cacheReadTokens
             },
             actualModel,
-            'openai-non-stream'
+            'openai-non-stream',
+            apiKeyData.useBooster
           )
         }
 
@@ -734,7 +736,7 @@ const handleResponses = async (req, res) => {
             cacheReadTokens,
             modelToRecord,
             accountId,
-            req.useBooster || false // 传递是否使用加油包
+            apiKeyData.useBooster || false // 传递是否使用加油包
           )
 
           logger.info(
@@ -751,7 +753,8 @@ const handleResponses = async (req, res) => {
               cacheReadTokens
             },
             modelToRecord,
-            'openai-stream'
+            'openai-stream',
+            apiKeyData.useBooster
           )
         } catch (error) {
           logger.error('Failed to record OpenAI usage:', error)

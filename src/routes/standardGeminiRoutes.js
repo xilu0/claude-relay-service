@@ -291,7 +291,7 @@ async function handleStandardGenerateContent(req, res) {
           0, // cacheReadTokens
           model,
           account.id,
-          req.useBooster || false // 传递是否使用加油包
+          req.apiKey.useBooster || false // 传递是否使用加油包
         )
         logger.info(
           `📊 Recorded Gemini usage - Input: ${usage.promptTokenCount}, Output: ${usage.candidatesTokenCount}, Total: ${usage.totalTokenCount}`
@@ -611,7 +611,7 @@ async function handleStandardStreamGenerateContent(req, res) {
             0, // cacheReadTokens
             model,
             account.id,
-            req.useBooster || false // 传递是否使用加油包
+            req.apiKey.useBooster || false // 传递是否使用加油包
           )
           logger.info(
             `📊 Recorded Gemini stream usage - Input: ${totalUsage.promptTokenCount}, Output: ${totalUsage.candidatesTokenCount}, Total: ${totalUsage.totalTokenCount}`

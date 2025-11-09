@@ -47,7 +47,7 @@ function ensureGeminiPermission(req, res) {
   return false
 }
 
-async function applyRateLimitTracking(req, usageSummary, model, context = '') {
+async function applyRateLimitTracking(req, usageSummary, model, context = '', useBooster = false) {
   if (!req.rateLimitInfo) {
     return
   }
@@ -58,7 +58,8 @@ async function applyRateLimitTracking(req, usageSummary, model, context = '') {
     const { totalTokens, totalCost } = await updateRateLimitCounters(
       req.rateLimitInfo,
       usageSummary,
-      model
+      model,
+      useBooster
     )
 
     if (totalTokens > 0) {
@@ -698,7 +699,7 @@ async function handleGenerateContent(req, res) {
           0, // cacheReadTokens
           model,
           account.id,
-          req.useBooster || false // 传递是否使用加油包
+          req.apiKey.useBooster || false // 传递是否使用加油包
         )
         logger.info(
           `📊 Recorded Gemini usage - Input: ${usage.promptTokenCount}, Output: ${usage.candidatesTokenCount}, Total: ${usage.totalTokenCount}`
@@ -713,7 +714,8 @@ async function handleGenerateContent(req, res) {
             cacheReadTokens: 0
           },
           model,
-          'gemini-non-stream'
+          'gemini-non-stream',
+          req.apiKey.useBooster
         )
       } catch (error) {
         logger.error('Failed to record Gemini usage:', error)
@@ -967,7 +969,7 @@ async function handleStreamGenerateContent(req, res) {
             0, // cacheReadTokens
             model,
             account.id,
-            req.useBooster || false // 传递是否使用加油包
+            req.apiKey.useBooster || false // 传递是否使用加油包
           )
           logger.info(
             `📊 Recorded Gemini stream usage - Input: ${totalUsage.promptTokenCount}, Output: ${totalUsage.candidatesTokenCount}, Total: ${totalUsage.totalTokenCount}`
@@ -982,7 +984,8 @@ async function handleStreamGenerateContent(req, res) {
               cacheReadTokens: 0
             },
             model,
-            'gemini-stream'
+            'gemini-stream',
+            req.apiKey.useBooster
           )
         } catch (error) {
           logger.error('Failed to record Gemini usage:', error)

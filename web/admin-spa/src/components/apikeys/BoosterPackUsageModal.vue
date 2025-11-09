@@ -274,8 +274,13 @@ const loadData = async () => {
 
   loading.value = true
   try {
-    // 加载使用记录
-    const recordsData = await apiKeysStore.fetchBoosterPackRecords(props.apiKey.id)
+    // 加载使用记录 - 默认查询最近30天
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const recordsData = await apiKeysStore.fetchBoosterPackRecords(
+      props.apiKey.id,
+      thirtyDaysAgo,
+      Date.now()
+    )
     records.value = recordsData.sort((a, b) => b.timestamp - a.timestamp)
 
     // 加载统计数据

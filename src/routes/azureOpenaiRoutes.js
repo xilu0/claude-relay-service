@@ -87,7 +87,7 @@ class AtomicUsageReporter {
         cacheReadTokens,
         modelToRecord,
         accountId,
-        req.useBooster || false // 传递是否使用加油包
+        req.apiKey?.useBooster || false // 传递是否使用加油包
       )
 
       // 同步更新 Azure 账户的 lastUsedAt 和累计使用量

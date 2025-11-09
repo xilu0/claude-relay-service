@@ -2138,7 +2138,9 @@ router.get('/api-keys/:keyId/booster-pack/records', authenticateAdmin, async (re
     const { startTime, endTime } = req.query
 
     // Validate and sanitize time parameters
-    const start = startTime ? Math.max(0, parseInt(startTime, 10)) : 0
+    // Default to last 30 days if no startTime provided
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+    const start = startTime ? Math.max(0, parseInt(startTime, 10)) : thirtyDaysAgo
     const end = endTime ? Math.max(0, parseInt(endTime, 10)) : Date.now()
 
     // Additional validation
