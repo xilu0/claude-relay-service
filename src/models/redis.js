@@ -792,74 +792,75 @@ class RedisClient {
     logger.debug(`💰 Opus cost incremented successfully, new weekly total: $${results[0][1]}`)
   }
 
-  // 💰 增加周总成本（滚动7天窗口，所有模型）
+  // 💰 增加周总成本（固定7天周期窗口，所有模型）
   async incrementWeeklyCost(keyId, amount) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
     const now = Date.now()
-    const weeklyKey = `usage:cost:weekly:${keyId}`
+    const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天（毫秒）
 
     logger.debug(`💰 Incrementing weekly cost for ${keyId}, amount: ${amount}, timestamp: ${now}`)
 
-    // 使用 Sorted Set 存储，score 为时间戳，value 为 cost
-    // 每次添加新的成本记录
-    const pipeline = this.client.pipeline()
-    pipeline.zadd(weeklyKey, now, `${now}:${amount}`)
-    // 清理 7 天前的数据（7天 = 604800000毫秒）
-    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
-    pipeline.zremrangebyscore(weeklyKey, '-inf', sevenDaysAgo)
-    // 设置过期时间为 8 天（7天窗口 + 1天缓冲）
-    pipeline.expire(weeklyKey, 8 * 24 * 3600)
+    // 获取窗口开始时间
+    let windowStart = await this.client.get(windowStartKey)
 
-    await pipeline.exec()
-    logger.debug(`💰 Weekly cost incremented successfully for ${keyId}`)
-  }
+    if (!windowStart) {
+      // 第一次请求，设置窗口开始时间
+      await this.client.set(windowStartKey, now, 'PX', windowDuration)
+      await this.client.set(totalCostKey, 0, 'PX', windowDuration)
+      windowStart = now
+      logger.debug(`💰 Started new weekly cycle for ${keyId} at ${new Date(now).toISOString()}`)
+    } else {
+      windowStart = parseInt(windowStart)
 
-  // 💰 获取周总成本（过去7天滚动窗口）
-  async getWeeklyCost(keyId) {
-    const now = Date.now()
-    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000
-    const weeklyKey = `usage:cost:weekly:${keyId}`
-
-    // 获取过去 7 天内的所有记录
-    const records = await this.client.zrangebyscore(weeklyKey, sevenDaysAgo, now)
-
-    if (!records || records.length === 0) {
-      logger.debug(`💰 No weekly cost records for ${keyId}`)
-      return 0
-    }
-
-    // 计算总成本：从每条记录中提取金额并求和
-    let totalCost = 0
-    for (const record of records) {
-      // 记录格式为 "timestamp:amount"
-      const parts = record.split(':')
-      if (parts.length === 2) {
-        totalCost += parseFloat(parts[1]) || 0
+      // 检查窗口是否已过期
+      if (now - windowStart >= windowDuration) {
+        // 窗口已过期，重置
+        await this.client.set(windowStartKey, now, 'PX', windowDuration)
+        await this.client.set(totalCostKey, 0, 'PX', windowDuration)
+        windowStart = now
+        logger.debug(
+          `💰 Weekly cycle expired for ${keyId}, started new cycle at ${new Date(now).toISOString()}`
+        )
       }
     }
 
-    logger.debug(`💰 Weekly cost for ${keyId}: ${totalCost.toFixed(6)} (${records.length} records)`)
+    // 增加本次费用
+    await this.client.incrbyfloat(totalCostKey, amount)
+    logger.debug(`💰 Weekly cost incremented successfully for ${keyId}, added $${amount}`)
+  }
+
+  // 💰 获取周总成本（固定7天周期窗口）
+  async getWeeklyCost(keyId) {
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
+
+    // 直接读取当前周期的总费用
+    const cost = await this.client.get(totalCostKey)
+    const totalCost = parseFloat(cost || 0)
+
+    logger.debug(`💰 Weekly cost for ${keyId}: $${totalCost.toFixed(6)}`)
     return totalCost
   }
 
-  // 💰 获取周成本重置时间（最早记录的时间戳 + 7天）
+  // 💰 获取周成本重置时间（周期起点 + 7天）
   async getWeeklyCostResetTime(keyId) {
-    const weeklyKey = `usage:cost:weekly:${keyId}`
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天（毫秒）
 
-    // 获取最早的一条记录（按 score 升序）
-    const earliest = await this.client.zrange(weeklyKey, 0, 0, 'WITHSCORES')
+    // 获取周期起点时间
+    const windowStart = await this.client.get(windowStartKey)
 
-    if (!earliest || earliest.length < 2) {
-      // 如果没有记录，返回当前时间 + 7天
-      logger.debug(`💰 No weekly cost records for ${keyId}, using default reset time`)
-      return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+    if (!windowStart) {
+      // 如果没有周期记录，返回当前时间 + 7天（默认值）
+      logger.debug(`💰 No active weekly cycle for ${keyId}, using default reset time`)
+      return new Date(Date.now() + windowDuration)
     }
 
-    // earliest[0] 是 value，earliest[1] 是 score (timestamp)
-    const earliestTimestamp = parseFloat(earliest[1])
-    const resetTime = new Date(earliestTimestamp + 7 * 24 * 60 * 60 * 1000)
+    // 重置时间 = 周期起点 + 7天
+    const resetTime = new Date(parseInt(windowStart) + windowDuration)
 
     logger.debug(
-      `💰 Weekly cost reset time for ${keyId}: ${resetTime.toISOString()} (based on earliest record at ${new Date(earliestTimestamp).toISOString()})`
+      `💰 Weekly cost reset time for ${keyId}: ${resetTime.toISOString()} (cycle started at ${new Date(parseInt(windowStart)).toISOString()})`
     )
 
     return resetTime

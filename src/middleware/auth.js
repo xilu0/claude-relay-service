@@ -587,7 +587,7 @@ const authenticateApiKey = async (req, res, next) => {
       }
     }
 
-    // 检查周费用限制（滚动7天窗口，所有模型）
+    // 检查周费用限制（固定7天周期，所有模型）
     const weeklyCostLimit = validation.keyData.weeklyCostLimit || 0
     if (weeklyCostLimit > 0) {
       const weeklyCost = validation.keyData.weeklyCost || 0
@@ -613,7 +613,7 @@ const authenticateApiKey = async (req, res, next) => {
             }), cost: $${weeklyCost.toFixed(2)}/$${weeklyCostLimit}, booster exhausted`
           )
 
-          // 计算精确的重置时间（基于最早费用记录的时间戳 + 7天）
+          // 计算精确的重置时间（周期起点 + 7天）
           const resetDate = await redis.getWeeklyCostResetTime(validation.keyData.id)
 
           return res.status(429).json({
@@ -623,8 +623,8 @@ const authenticateApiKey = async (req, res, next) => {
             costLimit: weeklyCostLimit,
             boosterPackAmount,
             boosterPackUsed,
-            resetAt: resetDate.toISOString(), // 最早费用记录 + 7天（滚动窗口）
-            resetInfo: '滚动7天窗口：最早的费用记录会在7天后自动清除'
+            resetAt: resetDate.toISOString(), // 周期起点 + 7天（固定周期）
+            resetInfo: '固定7天周期：从第一次使用开始，7天后周期结束并重置费用'
           })
         }
       }
