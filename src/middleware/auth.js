@@ -623,8 +623,10 @@ const authenticateApiKey = async (req, res, next) => {
             costLimit: weeklyCostLimit,
             boosterPackAmount,
             boosterPackUsed,
-            resetAt: resetDate.toISOString(), // 最早费用记录 + 7天（滚动窗口）
-            resetInfo: '滚动7天窗口：最早的费用记录会在7天后自动清除'
+            resetAt: resetDate ? resetDate.toISOString() : null, // 最早费用记录 + 7天（滚动窗口），null表示无记录
+            resetInfo: resetDate
+              ? '滚动7天窗口：最早的费用记录会在7天后自动清除'
+              : '滚动7天窗口：当前无费用记录'
           })
         }
       }
