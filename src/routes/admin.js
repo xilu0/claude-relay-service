@@ -1577,6 +1577,7 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       dailyCostLimit,
       totalCostLimit,
       weeklyOpusCostLimit,
+      weeklyCostLimit,
       tags,
       ownerId // 新增：所有者ID字段
     } = req.body
@@ -1752,6 +1753,15 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
           .json({ error: 'Weekly Opus cost limit must be a non-negative number' })
       }
       updates.weeklyOpusCostLimit = costLimit
+    }
+
+    // 处理周费用限制
+    if (weeklyCostLimit !== undefined && weeklyCostLimit !== null && weeklyCostLimit !== '') {
+      const costLimit = Number(weeklyCostLimit)
+      if (isNaN(costLimit) || costLimit < 0) {
+        return res.status(400).json({ error: 'Weekly cost limit must be a non-negative number' })
+      }
+      updates.weeklyCostLimit = costLimit
     }
 
     // 处理标签

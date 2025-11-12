@@ -612,9 +612,9 @@
                             variant="compact"
                           />
 
-                          <!-- 总费用限制进度条（无每日限制时展示） -->
+                          <!-- 总费用限制进度条 -->
                           <LimitProgressBar
-                            v-else-if="key.totalCostLimit > 0"
+                            v-if="key.totalCostLimit > 0"
                             :current="key.usage?.total?.cost || 0"
                             label="总费用限制"
                             :limit="key.totalCostLimit"
@@ -622,14 +622,9 @@
                             variant="compact"
                           />
 
-                          <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
+                          <!-- 时间窗口费用限制 -->
                           <div
-                            v-else-if="
-                              key.rateLimitWindow > 0 &&
-                              key.rateLimitCost > 0 &&
-                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                              (!key.totalCostLimit || key.totalCostLimit === 0)
-                            "
+                            v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0"
                             class="space-y-1.5"
                           >
                             <!-- 费用进度条 -->
@@ -665,7 +660,15 @@
 
                           <!-- 如果没有任何限制 -->
                           <div
-                            v-else
+                            v-if="
+                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                              (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                              (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                              (!key.rateLimitWindow ||
+                                key.rateLimitWindow === 0 ||
+                                !key.rateLimitCost ||
+                                key.rateLimitCost === 0)
+                            "
                             class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                           >
                             <i class="fas fa-infinity text-base" />
@@ -1386,9 +1389,9 @@
                     variant="compact"
                   />
 
-                  <!-- 总费用限制（无每日限制时展示） -->
+                  <!-- 总费用限制 -->
                   <LimitProgressBar
-                    v-else-if="key.totalCostLimit > 0"
+                    v-if="key.totalCostLimit > 0"
                     :current="key.usage?.total?.cost || 0"
                     label="总费用限制"
                     :limit="key.totalCostLimit"
@@ -1396,16 +1399,8 @@
                     variant="compact"
                   />
 
-                  <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
-                  <div
-                    v-else-if="
-                      key.rateLimitWindow > 0 &&
-                      key.rateLimitCost > 0 &&
-                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                      (!key.totalCostLimit || key.totalCostLimit === 0)
-                    "
-                    class="space-y-2"
-                  >
+                  <!-- 时间窗口费用限制 -->
+                  <div v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0" class="space-y-2">
                     <!-- 费用进度条 -->
                     <LimitProgressBar
                       :current="key.currentWindowCost || 0"
@@ -1439,7 +1434,15 @@
 
                   <!-- 无限制显示 -->
                   <div
-                    v-else
+                    v-if="
+                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                      (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                      (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                      (!key.rateLimitWindow ||
+                        key.rateLimitWindow === 0 ||
+                        !key.rateLimitCost ||
+                        key.rateLimitCost === 0)
+                    "
                     class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                   >
                     <i class="fas fa-infinity text-base" />
