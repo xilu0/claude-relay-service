@@ -89,7 +89,11 @@ class ClaudeRelayService {
     if (!message) {
       return false
     }
-    return message.toLowerCase().includes('this organization has been disabled')
+    const lowerMessage = message.toLowerCase()
+    return (
+      lowerMessage.includes('this organization has been disabled') ||
+      lowerMessage.includes('no available sessions')
+    )
   }
 
   // 🔍 判断是否是真实的 Claude Code 请求

@@ -333,6 +333,11 @@
                       限制
                     </th>
                     <th
+                      class="w-[10%] min-w-[90px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                    >
+                      🚀 加油包
+                    </th>
+                    <th
                       class="w-[5%] min-w-[45px] cursor-pointer px-3 py-4 text-right text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
                       @click="sortApiKeys('periodTokens')"
                     >
@@ -597,9 +602,19 @@
                             variant="compact"
                           />
 
-                          <!-- 总费用限制进度条（无每日限制时展示） -->
+                          <!-- 周费用限制进度条（滚动7天窗口） -->
                           <LimitProgressBar
-                            v-else-if="key.totalCostLimit > 0"
+                            v-if="key.weeklyCostLimit > 0"
+                            :current="key.weeklyCost || 0"
+                            label="周限制(7天)"
+                            :limit="key.weeklyCostLimit"
+                            type="weekly"
+                            variant="compact"
+                          />
+
+                          <!-- 总费用限制进度条 -->
+                          <LimitProgressBar
+                            v-if="key.totalCostLimit > 0"
                             :current="key.usage?.total?.cost || 0"
                             label="总费用限制"
                             :limit="key.totalCostLimit"
@@ -607,14 +622,9 @@
                             variant="compact"
                           />
 
-                          <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
+                          <!-- 时间窗口费用限制 -->
                           <div
-                            v-else-if="
-                              key.rateLimitWindow > 0 &&
-                              key.rateLimitCost > 0 &&
-                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                              (!key.totalCostLimit || key.totalCostLimit === 0)
-                            "
+                            v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0"
                             class="space-y-1.5"
                           >
                             <!-- 费用进度条 -->
@@ -650,13 +660,49 @@
 
                           <!-- 如果没有任何限制 -->
                           <div
-                            v-else
+                            v-if="
+                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                              (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                              (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                              (!key.rateLimitWindow ||
+                                key.rateLimitWindow === 0 ||
+                                !key.rateLimitCost ||
+                                key.rateLimitCost === 0)
+                            "
                             class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                           >
                             <i class="fas fa-infinity text-base" />
                             <span class="text-xs font-medium">无限制</span>
                           </div>
                         </div>
+                      </td>
+                      <!-- 🚀 加油包 -->
+                      <td class="px-3 py-2">
+                        <div
+                          v-if="key.boosterPackAmount && key.boosterPackAmount > 0"
+                          class="text-sm"
+                        >
+                          <div class="font-medium text-gray-900 dark:text-white">
+                            ${{ (key.boosterPackUsed || 0).toFixed(2) }} / ${{
+                              key.boosterPackAmount.toFixed(2)
+                            }}
+                          </div>
+                          <div
+                            class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"
+                          >
+                            <div
+                              class="h-full rounded-full bg-gradient-to-r from-yellow-400 to-orange-500 transition-all duration-300"
+                              :style="{
+                                width:
+                                  Math.min(
+                                    100,
+                                    ((key.boosterPackUsed || 0) / key.boosterPackAmount) * 100
+                                  ) + '%'
+                              }"
+                            ></div>
+                          </div>
+                        </div>
+                        <span v-else class="text-sm text-gray-400 dark:text-gray-500">未设置</span>
                       </td>
                       <!-- Token数量 -->
                       <td class="whitespace-nowrap px-3 py-3 text-right" style="font-size: 13px">
@@ -811,6 +857,23 @@
                           >
                             <i class="fas fa-edit" />
                             <span class="ml-1 hidden xl:inline">编辑</span>
+                          </button>
+                          <button
+                            v-if="key.boosterPackAmount && key.boosterPackAmount > 0"
+                            class="rounded px-2 py-1 text-xs font-medium text-orange-600 transition-colors hover:bg-orange-50 hover:text-orange-900 dark:hover:bg-orange-900/20"
+                            title="查看加油包使用"
+                            @click="openBoosterPackUsage(key)"
+                          >
+                            <i class="fas fa-chart-line" />
+                            <span class="ml-1 hidden xl:inline">加油包使用</span>
+                          </button>
+                          <button
+                            class="rounded px-2 py-1 text-xs font-medium text-yellow-600 transition-colors hover:bg-yellow-50 hover:text-yellow-900 dark:hover:bg-yellow-900/20"
+                            title="充值加油包"
+                            @click="openBoosterPackRecharge(key)"
+                          >
+                            <i class="fas fa-bolt" />
+                            <span class="ml-1 hidden xl:inline">充值加油包</span>
                           </button>
                           <button
                             v-if="
@@ -1316,9 +1379,19 @@
                     variant="compact"
                   />
 
-                  <!-- 总费用限制（无每日限制时展示） -->
+                  <!-- 周费用限制进度条（滚动7天窗口） -->
                   <LimitProgressBar
-                    v-else-if="key.totalCostLimit > 0"
+                    v-if="key.weeklyCostLimit > 0"
+                    :current="key.weeklyCost || 0"
+                    label="周限制(7天)"
+                    :limit="key.weeklyCostLimit"
+                    type="weekly"
+                    variant="compact"
+                  />
+
+                  <!-- 总费用限制 -->
+                  <LimitProgressBar
+                    v-if="key.totalCostLimit > 0"
                     :current="key.usage?.total?.cost || 0"
                     label="总费用限制"
                     :limit="key.totalCostLimit"
@@ -1326,16 +1399,8 @@
                     variant="compact"
                   />
 
-                  <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
-                  <div
-                    v-else-if="
-                      key.rateLimitWindow > 0 &&
-                      key.rateLimitCost > 0 &&
-                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                      (!key.totalCostLimit || key.totalCostLimit === 0)
-                    "
-                    class="space-y-2"
-                  >
+                  <!-- 时间窗口费用限制 -->
+                  <div v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0" class="space-y-2">
                     <!-- 费用进度条 -->
                     <LimitProgressBar
                       :current="key.currentWindowCost || 0"
@@ -1369,7 +1434,15 @@
 
                   <!-- 无限制显示 -->
                   <div
-                    v-else
+                    v-if="
+                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                      (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                      (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                      (!key.rateLimitWindow ||
+                        key.rateLimitWindow === 0 ||
+                        !key.rateLimitCost ||
+                        key.rateLimitCost === 0)
+                    "
                     class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                   >
                     <i class="fas fa-infinity text-base" />
@@ -1921,6 +1994,21 @@
       :show="showUsageDetailModal"
       @close="showUsageDetailModal = false"
     />
+
+    <!-- 🚀 加油包使用详情弹窗 -->
+    <BoosterPackUsageModal
+      :api-key="selectedBoosterPackApiKey"
+      :is-open="showBoosterPackUsageModal"
+      @close="showBoosterPackUsageModal = false"
+    />
+
+    <!-- 🚀 加油包充值弹窗 -->
+    <BoosterPackRechargeModal
+      :api-key="selectedBoosterPackApiKey"
+      :is-open="showBoosterPackRechargeModal"
+      @close="showBoosterPackRechargeModal = false"
+      @success="handleBoosterPackRechargeSuccess"
+    />
   </div>
 </template>
 
@@ -1940,6 +2028,8 @@ import BatchEditApiKeyModal from '@/components/apikeys/BatchEditApiKeyModal.vue'
 import ExpiryEditModal from '@/components/apikeys/ExpiryEditModal.vue'
 import UsageDetailModal from '@/components/apikeys/UsageDetailModal.vue'
 import LimitProgressBar from '@/components/apikeys/LimitProgressBar.vue'
+import BoosterPackUsageModal from '@/components/apikeys/BoosterPackUsageModal.vue'
+import BoosterPackRechargeModal from '@/components/apikeys/BoosterPackRechargeModal.vue'
 import CustomDropdown from '@/components/common/CustomDropdown.vue'
 
 // 响应式数据
@@ -2070,6 +2160,10 @@ const showNewApiKeyModal = ref(false)
 const showBatchApiKeyModal = ref(false)
 const showBatchEditModal = ref(false)
 const editingApiKey = ref(null)
+// 🚀 加油包模态框
+const showBoosterPackUsageModal = ref(false)
+const showBoosterPackRechargeModal = ref(false)
+const selectedBoosterPackApiKey = ref(null)
 const renewingApiKey = ref(null)
 const newApiKeyData = ref(null)
 const batchApiKeyData = ref([])
@@ -3294,6 +3388,24 @@ const handleEditSuccess = () => {
 const handleRenewSuccess = () => {
   showRenewApiKeyModal.value = false
   showToast('API Key 续期成功', 'success')
+  loadApiKeys()
+}
+
+// 🚀 打开加油包使用详情
+const openBoosterPackUsage = (key) => {
+  selectedBoosterPackApiKey.value = key
+  showBoosterPackUsageModal.value = true
+}
+
+// 🚀 打开加油包充值
+const openBoosterPackRecharge = (key) => {
+  selectedBoosterPackApiKey.value = key
+  showBoosterPackRechargeModal.value = true
+}
+
+// 🚀 处理加油包充值成功
+const handleBoosterPackRechargeSuccess = () => {
+  showBoosterPackRechargeModal.value = false
   loadApiKeys()
 }
 

@@ -257,3 +257,26 @@ security-audit:
 security-fix:
 	@echo "🔧 修复安全漏洞..."
 	npm audit fix
+
+
+build-docker:
+	@echo "📦 构建 Docker 镜像并打上时间戳标签..."
+	$(eval DATE_TAG := $(shell date +%Y%m%d%H%M))
+	docker build --push -t heishui/claude-relay-service:$(DATE_TAG) -t heishui/claude-relay-service:latest .
+	@echo "✅ Docker 镜像构建完成，标签：$(DATE_TAG) 和 latest"
+
+update-docker-compose:
+	cp docker-compose.yml ${HOME}/service/claude-relay/
+
+update-docker-env:
+	cp .env ${HOME}/service/claude-relay/
+
+restart-claude-relay: 
+	cd ${HOME}/service/claude-relay/ && docker compose up -d claude-relay
+
+update: build-docker update-docker-compose restart-claude-relay
+
+localstart:
+	npm run install:web
+	npm run build:web
+	npm run service:start

@@ -22,14 +22,20 @@ function checkPermissions(apiKeyData, requiredPermission = 'claude') {
   return permissions === 'all' || permissions === requiredPermission
 }
 
-function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
+function queueRateLimitUpdate(
+  rateLimitInfo,
+  usageSummary,
+  model,
+  context = '',
+  useBooster = false
+) {
   if (!rateLimitInfo) {
     return
   }
 
   const label = context ? ` (${context})` : ''
 
-  updateRateLimitCounters(rateLimitInfo, usageSummary, model)
+  updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBooster)
     .then(({ totalTokens, totalCost }) => {
       if (totalTokens > 0) {
         logger.api(`📊 Updated rate limit token count${label}: +${totalTokens} tokens`)
@@ -286,7 +292,9 @@ async function handleChatCompletion(req, res, apiKeyData) {
                 apiKeyData.id,
                 usage, // 直接传递整个 usage 对象，包含可能的 cache_creation 详细数据
                 model,
-                accountId
+                accountId,
+                'claude',
+                apiKeyData.useBooster
               )
               .catch((error) => {
                 logger.error('❌ Failed to record usage:', error)
@@ -301,7 +309,8 @@ async function handleChatCompletion(req, res, apiKeyData) {
                 cacheReadTokens
               },
               model,
-              'openai-claude-stream'
+              'openai-claude-stream',
+              apiKeyData.useBooster
             )
           }
         },
@@ -374,7 +383,9 @@ async function handleChatCompletion(req, res, apiKeyData) {
             apiKeyData.id,
             usage, // 直接传递整个 usage 对象，包含可能的 cache_creation 详细数据
             claudeRequest.model,
-            accountId
+            accountId,
+            'claude',
+            apiKeyData.useBooster
           )
           .catch((error) => {
             logger.error('❌ Failed to record usage:', error)
@@ -389,7 +400,8 @@ async function handleChatCompletion(req, res, apiKeyData) {
             cacheReadTokens
           },
           claudeRequest.model,
-          'openai-claude-non-stream'
+          'openai-claude-non-stream',
+          apiKeyData.useBooster
         )
       }
 

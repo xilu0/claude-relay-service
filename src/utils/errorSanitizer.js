@@ -152,7 +152,8 @@ function isAccountDisabledError(statusCode, body) {
     lowerMessage.includes('no account supporting') ||
     lowerMessage.includes('account not found') ||
     lowerMessage.includes('invalid account') ||
-    lowerMessage.includes('too many active sessions')
+    lowerMessage.includes('too many active sessions') ||
+    lowerMessage.includes('no available sessions')
   )
 }
 
