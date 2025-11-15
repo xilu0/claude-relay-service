@@ -1552,7 +1552,7 @@
           >
             <div class="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
               <span class="text-xs text-gray-600 dark:text-gray-400 sm:text-sm">
-                共 {{ sortedApiKeys.length }} 条记录
+                共 {{ apiKeysStore.pagination.total || 0 }} 条记录
               </span>
               <div class="flex items-center gap-2">
                 <span class="text-xs text-gray-600 dark:text-gray-400 sm:text-sm">每页显示</span>
@@ -2018,6 +2018,7 @@ import { showToast } from '@/utils/toast'
 import { apiClient } from '@/config/api'
 import { useClientsStore } from '@/stores/clients'
 import { useAuthStore } from '@/stores/auth'
+import { useApiKeysStore } from '@/stores/apiKeys' // 🚀 新增
 import * as XLSX from 'xlsx-js-style'
 import CreateApiKeyModal from '@/components/apikeys/CreateApiKeyModal.vue'
 import EditApiKeyModal from '@/components/apikeys/EditApiKeyModal.vue'
@@ -2035,6 +2036,7 @@ import CustomDropdown from '@/components/common/CustomDropdown.vue'
 // 响应式数据
 const clientsStore = useClientsStore()
 const authStore = useAuthStore()
+const apiKeysStore = useApiKeysStore() // 🚀 新增 store
 const apiKeys = ref([])
 
 // 获取 LDAP 启用状态
@@ -2135,22 +2137,41 @@ const selectedTagCount = computed(() => {
     .length
 })
 
-// 分页相关
-const currentPage = ref(1)
-// 从 localStorage 读取保存的每页显示条数，默认为 10
-const getInitialPageSize = () => {
+// 🚀 分页相关（使用服务端分页）
+const pageSizeOptions = [10, 20, 50, 100]
+// 从 localStorage 读取保存的每页显示条数并初始化 store
+const initializePageSize = () => {
   const saved = localStorage.getItem('apiKeysPageSize')
   if (saved) {
     const parsedSize = parseInt(saved, 10)
-    // 验证保存的值是否在允许的选项中
     if ([10, 20, 50, 100].includes(parsedSize)) {
-      return parsedSize
+      apiKeysStore.pagination.pageSize = parsedSize
     }
   }
-  return 10
 }
-const pageSize = ref(getInitialPageSize())
-const pageSizeOptions = [10, 20, 50, 100]
+// 初始化
+initializePageSize()
+
+// 🚀 创建计算属性作为代理，方便模板使用
+const currentPage = computed({
+  get: () => apiKeysStore.pagination.page,
+  set: (val) => {
+    apiKeysStore.pagination.page = val
+    // 服务端分页：重新加载数据
+    loadApiKeys()
+  }
+})
+
+const pageSize = computed({
+  get: () => apiKeysStore.pagination.pageSize,
+  set: (val) => {
+    apiKeysStore.pagination.pageSize = val
+    apiKeysStore.pagination.page = 1 // 重置到第一页
+    localStorage.setItem('apiKeysPageSize', val.toString())
+    // 服务端分页：重新加载数据
+    loadApiKeys()
+  }
+})
 
 // 模态框状态
 const showCreateApiKeyModal = ref(false)
@@ -2234,88 +2255,21 @@ const getBindingDisplayStrings = (key) => {
 
 // 计算排序后的API Keys
 const sortedApiKeys = computed(() => {
-  // 先进行标签筛选
-  let filteredKeys = apiKeys.value
-  if (selectedTagFilter.value) {
-    filteredKeys = apiKeys.value.filter(
-      (key) => key.tags && key.tags.includes(selectedTagFilter.value)
-    )
-  }
-
-  // 然后进行搜索过滤
-  if (searchKeyword.value) {
-    const keyword = searchKeyword.value.toLowerCase().trim()
-    filteredKeys = filteredKeys.filter((key) => {
-      if (searchMode.value === 'bindingAccount') {
-        const bindings = getBindingDisplayStrings(key)
-        if (bindings.length === 0) return false
-        return bindings.some((text) => text.toLowerCase().includes(keyword))
-      }
-
-      const nameMatch = key.name && key.name.toLowerCase().includes(keyword)
-      if (isLdapEnabled.value) {
-        const ownerMatch =
-          key.ownerDisplayName && key.ownerDisplayName.toLowerCase().includes(keyword)
-        return nameMatch || ownerMatch
-      }
-      return nameMatch
-    })
-  }
-
-  // 如果没有排序字段，返回筛选后的结果
-  if (!apiKeysSortBy.value) return filteredKeys
-
-  // 排序
-  const sorted = [...filteredKeys].sort((a, b) => {
-    let aVal = a[apiKeysSortBy.value]
-    let bVal = b[apiKeysSortBy.value]
-
-    // 处理特殊排序字段
-    if (apiKeysSortBy.value === 'status') {
-      aVal = a.isActive ? 1 : 0
-      bVal = b.isActive ? 1 : 0
-    } else if (apiKeysSortBy.value === 'periodRequests') {
-      aVal = getPeriodRequests(a)
-      bVal = getPeriodRequests(b)
-    } else if (apiKeysSortBy.value === 'periodCost') {
-      aVal = calculatePeriodCost(a)
-      bVal = calculatePeriodCost(b)
-    } else if (apiKeysSortBy.value === 'periodTokens') {
-      aVal = getPeriodTokens(a)
-      bVal = getPeriodTokens(b)
-    } else if (apiKeysSortBy.value === 'dailyCost') {
-      aVal = a.dailyCost || 0
-      bVal = b.dailyCost || 0
-    } else if (apiKeysSortBy.value === 'totalCost') {
-      aVal = a.totalCost || 0
-      bVal = b.totalCost || 0
-    } else if (
-      apiKeysSortBy.value === 'createdAt' ||
-      apiKeysSortBy.value === 'expiresAt' ||
-      apiKeysSortBy.value === 'lastUsedAt'
-    ) {
-      aVal = aVal ? new Date(aVal).getTime() : 0
-      bVal = bVal ? new Date(bVal).getTime() : 0
-    }
-
-    if (aVal < bVal) return apiKeysSortOrder.value === 'asc' ? -1 : 1
-    if (aVal > bVal) return apiKeysSortOrder.value === 'asc' ? 1 : -1
-    return 0
-  })
-
-  return sorted
+  // 🚀 使用服务端分页模式：直接返回从服务器获取的数据
+  // 服务端已经处理了筛选、排序和分页，前端不需要再次处理
+  return apiKeys.value
 })
 
 // 计算总页数
 const totalPages = computed(() => {
-  const total = sortedApiKeys.value.length
-  return Math.ceil(total / pageSize.value) || 0
+  // 🚀 始终使用服务端分页
+  return apiKeysStore.pagination.totalPages || 0
 })
 
 // 计算显示的页码数组
 const pageNumbers = computed(() => {
   const pages = []
-  const current = currentPage.value
+  const current = apiKeysStore.pagination.page
   const total = totalPages.value
 
   if (total <= 7) {
@@ -2367,11 +2321,11 @@ const showTrailingEllipsis = computed(() => {
   return shouldShowLastPage.value && pages[pages.length - 1] < totalPages.value - 1
 })
 
-// 获取分页后的数据
+// 🚀 获取分页后的数据
 const paginatedApiKeys = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return sortedApiKeys.value.slice(start, end)
+  // 🚀 使用服务端分页模式：直接返回从服务器获取的当前页数据
+  // 服务端已经处理了筛选、排序和分页，前端不需要再次处理
+  return apiKeys.value
 })
 
 // 加载账户列表
@@ -2475,35 +2429,46 @@ const loadAccounts = async () => {
 const loadApiKeys = async () => {
   apiKeysLoading.value = true
   try {
-    // 构建请求参数
-    let params = {}
+    // 🚀 始终使用服务端分页模式
+    let timeRangeParam = 'all'
+    let startDateParam = undefined
+    let endDateParam = undefined
+
+    // 根据 globalDateFilter 设置 timeRange 参数
     if (
       globalDateFilter.type === 'custom' &&
       globalDateFilter.customStart &&
       globalDateFilter.customEnd
     ) {
-      params.startDate = globalDateFilter.customStart
-      params.endDate = globalDateFilter.customEnd
-      params.timeRange = 'custom'
-    } else if (globalDateFilter.preset === 'all') {
-      params.timeRange = 'all'
+      timeRangeParam = 'custom'
+      startDateParam = globalDateFilter.customStart
+      endDateParam = globalDateFilter.customEnd
     } else {
-      params.timeRange = globalDateFilter.preset
+      timeRangeParam = globalDateFilter.preset || 'all'
     }
 
-    const queryString = new URLSearchParams(params).toString()
-    const data = await apiClient.get(`/admin/api-keys?${queryString}`)
-    if (data.success) {
-      apiKeys.value = data.data || []
-      // 更新可用标签列表
-      const tagsSet = new Set()
-      apiKeys.value.forEach((key) => {
-        if (key.tags && Array.isArray(key.tags)) {
-          key.tags.forEach((tag) => tagsSet.add(tag))
-        }
-      })
-      availableTags.value = Array.from(tagsSet).sort()
-    }
+    await apiKeysStore.fetchApiKeys({
+      page: apiKeysStore.pagination.page,
+      pageSize: apiKeysStore.pagination.pageSize,
+      sortBy: apiKeysSortBy.value || 'createdAt',
+      sortOrder: apiKeysSortOrder.value || 'desc',
+      search: searchKeyword.value || '',
+      status: 'all',
+      permissions: 'all',
+      timeRange: timeRangeParam,
+      startDate: startDateParam,
+      endDate: endDateParam
+    })
+    apiKeys.value = apiKeysStore.apiKeys
+
+    // 更新可用标签列表
+    const tagsSet = new Set()
+    apiKeys.value.forEach((key) => {
+      if (key.tags && Array.isArray(key.tags)) {
+        key.tags.forEach((tag) => tagsSet.add(tag))
+      }
+    })
+    availableTags.value = Array.from(tagsSet).sort()
   } catch (error) {
     showToast('加载 API Keys 失败', 'error')
   } finally {
@@ -4275,13 +4240,16 @@ watch(searchMode, () => {
 })
 
 // 监听分页变化，更新全选状态
+// 🚀 监听分页变化，更新选中状态（localStorage保存已在计算属性setter中处理）
 watch([currentPage, pageSize], () => {
   updateSelectAllState()
 })
 
-// 监听每页显示条数变化，保存到 localStorage
-watch(pageSize, (newSize) => {
-  localStorage.setItem('apiKeysPageSize', newSize.toString())
+// 🚀 监听排序字段变化，服务端分页模式下重新加载数据
+watch([apiKeysSortBy, apiKeysSortOrder], () => {
+  // 服务端分页：重置到第一页并重新加载数据
+  apiKeysStore.pagination.page = 1
+  loadApiKeys()
 })
 
 // 监听API Keys数据变化，清理无效的选中状态

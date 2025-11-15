@@ -35,7 +35,7 @@ class AtomicUsageReporter {
     this.pendingReports = new Map()
   }
 
-  async reportOnce(requestId, usageData, apiKeyId, modelToRecord, accountId) {
+  async reportOnce(requestId, usageData, apiKeyId, modelToRecord, accountId, useBooster = false) {
     if (this.reportedUsage.has(requestId)) {
       logger.debug(`Usage already reported for request: ${requestId}`)
       return false
@@ -51,7 +51,8 @@ class AtomicUsageReporter {
       usageData,
       apiKeyId,
       modelToRecord,
-      accountId
+      accountId,
+      useBooster
     )
     this.pendingReports.set(requestId, reportPromise)
 
@@ -66,7 +67,14 @@ class AtomicUsageReporter {
     }
   }
 
-  async _performReport(requestId, usageData, apiKeyId, modelToRecord, accountId) {
+  async _performReport(
+    requestId,
+    usageData,
+    apiKeyId,
+    modelToRecord,
+    accountId,
+    useBooster = false
+  ) {
     try {
       const inputTokens = usageData.prompt_tokens || usageData.input_tokens || 0
       const outputTokens = usageData.completion_tokens || usageData.output_tokens || 0
@@ -87,7 +95,7 @@ class AtomicUsageReporter {
         cacheReadTokens,
         modelToRecord,
         accountId,
-        req.apiKey?.useBooster || false // 传递是否使用加油包
+        useBooster // 传递是否使用加油包
       )
 
       // 同步更新 Azure 账户的 lastUsedAt 和累计使用量
@@ -193,7 +201,8 @@ router.post('/chat/completions', authenticateApiKey, async (req, res) => {
               usageData,
               req.apiKey.id,
               modelToRecord,
-              account.id
+              account.id,
+              req.apiKey?.useBooster || false
             )
           }
         },
@@ -286,7 +295,8 @@ router.post('/responses', authenticateApiKey, async (req, res) => {
               usageData,
               req.apiKey.id,
               modelToRecord,
-              account.id
+              account.id,
+              req.apiKey?.useBooster || false
             )
           }
         },

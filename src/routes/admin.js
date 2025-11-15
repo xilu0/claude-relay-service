@@ -193,7 +193,72 @@ router.get('/api-keys/:keyId/cost-debug', authenticateAdmin, async (req, res) =>
 // 获取所有API Keys
 router.get('/api-keys', authenticateAdmin, async (req, res) => {
   try {
-    const { timeRange = 'all', startDate, endDate } = req.query // all, 7days, monthly, custom
+    // 🚀 检查是否使用分页模式
+    const {
+      page,
+      pageSize,
+      sortBy,
+      sortOrder,
+      search,
+      status,
+      permissions,
+      timeRange = 'all',
+      startDate,
+      endDate
+    } = req.query
+
+    // 如果提供了分页参数，使用分页模式
+    if (page) {
+      try {
+        const result = await apiKeyService.getApiKeysPaginated({
+          page: parseInt(page, 10),
+          pageSize: parseInt(pageSize || 20, 10),
+          sortBy: sortBy || 'createdAt',
+          sortOrder: sortOrder || 'desc',
+          searchQuery: search || '',
+          filterStatus: status || 'all',
+          filterPermissions: permissions || 'all'
+        })
+
+        // 获取用户服务来补充owner信息
+        const userService = require('../services/userService')
+
+        // 为每个API Key添加owner的displayName
+        for (const apiKey of result.data) {
+          if (apiKey.userId) {
+            try {
+              const user = await userService.getUserById(apiKey.userId, false)
+              if (user) {
+                apiKey.ownerDisplayName = user.displayName || user.username || 'Unknown User'
+              } else {
+                apiKey.ownerDisplayName = 'Unknown User'
+              }
+            } catch (error) {
+              logger.debug(`无法获取用户 ${apiKey.userId} 的信息:`, error)
+              apiKey.ownerDisplayName = 'Unknown User'
+            }
+          } else {
+            apiKey.ownerDisplayName =
+              apiKey.createdBy === 'admin' ? 'Admin' : apiKey.createdBy || 'Admin'
+          }
+        }
+
+        return res.json({
+          success: true,
+          data: result.data,
+          pagination: result.pagination
+        })
+      } catch (error) {
+        logger.error('❌ Failed to get paginated API keys:', error)
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to get API keys',
+          message: error.message
+        })
+      }
+    }
+
+    // 🔄 原有逻辑：用于timeRange查询和非分页模式
     const apiKeys = await apiKeyService.getAllApiKeys()
 
     // 获取用户服务来补充owner信息

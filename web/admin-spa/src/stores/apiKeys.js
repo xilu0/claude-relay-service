@@ -11,16 +11,48 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
   const sortBy = ref('')
   const sortOrder = ref('asc')
 
+  // 🚀 分页状态
+  const pagination = ref({
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    totalPages: 0
+  })
+
   // Actions
 
-  // 获取API Keys列表
-  const fetchApiKeys = async () => {
+  // 获取API Keys列表（支持分页）
+  const fetchApiKeys = async (options = {}) => {
     loading.value = true
     error.value = null
     try {
-      const response = await apiClient.get('/admin/api-keys')
+      const params = {
+        page: options.page || pagination.value.page,
+        pageSize: options.pageSize || pagination.value.pageSize,
+        sortBy: options.sortBy || sortBy.value || 'createdAt',
+        sortOrder: options.sortOrder || sortOrder.value || 'desc',
+        search: options.search || '',
+        status: options.status || 'all',
+        permissions: options.permissions || 'all',
+        timeRange: options.timeRange || 'all'
+      }
+
+      // 添加可选的日期范围参数
+      if (options.startDate) {
+        params.startDate = options.startDate
+      }
+      if (options.endDate) {
+        params.endDate = options.endDate
+      }
+
+      const response = await apiClient.get('/admin/api-keys', { params })
+
       if (response.success) {
         apiKeys.value = response.data || []
+        // 更新分页信息
+        if (response.pagination) {
+          pagination.value = response.pagination
+        }
       } else {
         throw new Error(response.message || '获取API Keys失败')
       }
@@ -30,6 +62,19 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
     } finally {
       loading.value = false
     }
+  }
+
+  // 🚀 设置页码
+  const setPage = async (page) => {
+    pagination.value.page = page
+    await fetchApiKeys()
+  }
+
+  // 🚀 设置每页条数
+  const setPageSize = async (pageSize) => {
+    pagination.value.pageSize = pageSize
+    pagination.value.page = 1 // 重置到第一页
+    await fetchApiKeys()
   }
 
   // 创建API Key
@@ -272,9 +317,12 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
     statsTimeRange,
     sortBy,
     sortOrder,
+    pagination, // 🚀 新增分页状态
 
     // Actions
     fetchApiKeys,
+    setPage, // 🚀 新增分页方法
+    setPageSize, // 🚀 新增分页方法
     createApiKey,
     updateApiKey,
     toggleApiKey,

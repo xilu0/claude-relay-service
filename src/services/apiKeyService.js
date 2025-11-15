@@ -654,6 +654,351 @@ class ApiKeyService {
     }
   }
 
+  // 🔧 辅助方法：丰富单个API Key的详细数据
+  async _enrichApiKey(key, client, accountInfoCache) {
+    try {
+      // 并行查询所有统计数据
+      const [
+        usage,
+        costStats,
+        concurrency,
+        dailyCost,
+        weeklyOpusCost,
+        weeklyCost,
+        boosterPackUsed
+      ] = await Promise.all([
+        redis.getUsageStats(key.id),
+        redis.getCostStats(key.id),
+        redis.getConcurrency(key.id),
+        redis.getDailyCost(key.id),
+        redis.getWeeklyOpusCost(key.id),
+        redis.getWeeklyCost(key.id),
+        redis.getBoosterPackUsed(key.id)
+      ])
+
+      // 添加cost信息到usage对象以保持前端兼容性
+      if (usage && costStats) {
+        usage.total = usage.total || {}
+        usage.total.cost = costStats.total
+        usage.totalCost = costStats.total
+      }
+
+      // 基本字段转换
+      key.usage = usage
+      key.totalCost = costStats ? costStats.total : 0
+      key.tokenLimit = parseInt(key.tokenLimit || 0)
+      key.concurrencyLimit = parseInt(key.concurrencyLimit || 0)
+      key.rateLimitWindow = parseInt(key.rateLimitWindow || 0)
+      key.rateLimitRequests = parseInt(key.rateLimitRequests || 0)
+      key.rateLimitCost = parseFloat(key.rateLimitCost || 0)
+      key.currentConcurrency = concurrency
+      key.isActive = key.isActive === 'true'
+      key.enableModelRestriction = key.enableModelRestriction === 'true'
+      key.enableClientRestriction = key.enableClientRestriction === 'true'
+      key.permissions = key.permissions || 'all'
+      key.dailyCostLimit = parseFloat(key.dailyCostLimit || 0)
+      key.totalCostLimit = parseFloat(key.totalCostLimit || 0)
+      key.weeklyOpusCostLimit = parseFloat(key.weeklyOpusCostLimit || 0)
+      key.weeklyCostLimit = parseFloat(key.weeklyCostLimit || 0)
+      key.boosterPackAmount = parseFloat(key.boosterPackAmount || 0)
+      key.boosterPackUsed = boosterPackUsed || 0
+      key.dailyCost = dailyCost || 0
+      key.weeklyOpusCost = weeklyOpusCost || 0
+      key.weeklyCost = weeklyCost || 0
+      key.activationDays = parseInt(key.activationDays || 0)
+      key.activationUnit = key.activationUnit || 'days'
+      key.expirationMode = key.expirationMode || 'fixed'
+      key.isActivated = key.isActivated === 'true'
+      key.activatedAt = key.activatedAt || null
+
+      // 获取速率限制窗口信息
+      if (key.rateLimitWindow > 0) {
+        const requestCountKey = `rate_limit:requests:${key.id}`
+        const tokenCountKey = `rate_limit:tokens:${key.id}`
+        const costCountKey = `rate_limit:cost:${key.id}`
+        const windowStartKey = `rate_limit:window_start:${key.id}`
+
+        const [currentWindowRequests, currentWindowTokens, currentWindowCost, windowStart] =
+          await Promise.all([
+            client.get(requestCountKey),
+            client.get(tokenCountKey),
+            client.get(costCountKey),
+            client.get(windowStartKey)
+          ])
+
+        key.currentWindowRequests = parseInt(currentWindowRequests || '0')
+        key.currentWindowTokens = parseInt(currentWindowTokens || '0')
+        key.currentWindowCost = parseFloat(currentWindowCost || '0')
+
+        if (windowStart) {
+          const now = Date.now()
+          const windowStartTime = parseInt(windowStart)
+          const windowDuration = key.rateLimitWindow * 60 * 1000
+          const windowEndTime = windowStartTime + windowDuration
+
+          if (now < windowEndTime) {
+            key.windowStartTime = windowStartTime
+            key.windowEndTime = windowEndTime
+            key.windowRemainingSeconds = Math.max(0, Math.floor((windowEndTime - now) / 1000))
+          } else {
+            key.windowStartTime = null
+            key.windowEndTime = null
+            key.windowRemainingSeconds = 0
+            key.currentWindowRequests = 0
+            key.currentWindowTokens = 0
+            key.currentWindowCost = 0
+          }
+        } else {
+          key.windowStartTime = null
+          key.windowEndTime = null
+          key.windowRemainingSeconds = null
+        }
+      } else {
+        key.currentWindowRequests = 0
+        key.currentWindowTokens = 0
+        key.currentWindowCost = 0
+        key.windowStartTime = null
+        key.windowEndTime = null
+        key.windowRemainingSeconds = null
+      }
+
+      // 解析JSON字段
+      try {
+        key.restrictedModels = key.restrictedModels ? JSON.parse(key.restrictedModels) : []
+      } catch (e) {
+        key.restrictedModels = []
+      }
+      try {
+        key.allowedClients = key.allowedClients ? JSON.parse(key.allowedClients) : []
+      } catch (e) {
+        key.allowedClients = []
+      }
+      try {
+        key.tags = key.tags ? JSON.parse(key.tags) : []
+      } catch (e) {
+        key.tags = []
+      }
+
+      // 移除已弃用字段
+      if (Object.prototype.hasOwnProperty.call(key, 'ccrAccountId')) {
+        delete key.ccrAccountId
+      }
+
+      // 获取最后使用记录
+      let lastUsageRecord = null
+      try {
+        const usageRecords = await redis.getUsageRecords(key.id, 1)
+        if (Array.isArray(usageRecords) && usageRecords.length > 0) {
+          lastUsageRecord = usageRecords[0]
+        }
+      } catch (error) {
+        logger.debug(`加载 API Key ${key.id} 的使用记录失败:`, error)
+      }
+
+      if (lastUsageRecord && (lastUsageRecord.accountId || lastUsageRecord.accountType)) {
+        const resolvedAccount = await this._resolveLastUsageAccount(
+          key,
+          lastUsageRecord,
+          accountInfoCache,
+          client
+        )
+
+        if (resolvedAccount) {
+          key.lastUsage = {
+            accountId: resolvedAccount.accountId,
+            rawAccountId: lastUsageRecord.accountId || resolvedAccount.accountId,
+            accountType: resolvedAccount.accountType,
+            accountCategory: resolvedAccount.accountCategory,
+            accountName: resolvedAccount.accountName,
+            recordedAt: lastUsageRecord.timestamp || key.lastUsedAt || null
+          }
+        } else {
+          key.lastUsage = {
+            accountId: null,
+            rawAccountId: lastUsageRecord.accountId || null,
+            accountType: 'deleted',
+            accountCategory: 'deleted',
+            accountName: '已删除',
+            recordedAt: lastUsageRecord.timestamp || key.lastUsedAt || null
+          }
+        }
+      } else {
+        key.lastUsage = null
+      }
+
+      delete key.apiKey // 不返回哈希后的key
+      return key
+    } catch (error) {
+      logger.error(`❌ Failed to enrich API key ${key.id}:`, error)
+      throw error
+    }
+  }
+
+  // 📄 获取分页的API Keys列表（性能优化版）
+  async getApiKeysPaginated(options = {}) {
+    try {
+      const {
+        page = 1,
+        pageSize = 20,
+        includeDeleted = false,
+        sortBy = 'createdAt',
+        sortOrder = 'desc',
+        searchQuery = '',
+        filterStatus = 'all',
+        filterPermissions = 'all'
+      } = options
+
+      // 1️⃣ 获取所有API Key的基本信息（轻量级查询）
+      let apiKeys = await redis.getAllApiKeys()
+      const client = redis.getClientSafe()
+      const accountInfoCache = new Map()
+
+      // 2️⃣ 过滤逻辑
+      // 过滤已删除的keys
+      if (!includeDeleted) {
+        apiKeys = apiKeys.filter((key) => key.isDeleted !== 'true')
+      }
+
+      // 状态过滤
+      if (filterStatus !== 'all') {
+        apiKeys = apiKeys.filter(
+          (key) => key.isActive === (filterStatus === 'active' ? 'true' : 'false')
+        )
+      }
+
+      // 权限过滤
+      if (filterPermissions !== 'all') {
+        apiKeys = apiKeys.filter((key) => (key.permissions || 'all') === filterPermissions)
+      }
+
+      // 搜索过滤
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase()
+        apiKeys = apiKeys.filter(
+          (key) =>
+            key.name?.toLowerCase().includes(query) ||
+            key.description?.toLowerCase().includes(query) ||
+            key.id?.toLowerCase().includes(query) ||
+            (key.tags && JSON.stringify(key.tags).toLowerCase().includes(query))
+        )
+      }
+
+      // 3️⃣ 排序（支持计算字段）
+      // 检查是否需要额外数据来排序（如 periodCost, periodTokens, periodRequests）
+      const needsStatisticsForSort = [
+        'periodCost',
+        'periodTokens',
+        'periodRequests',
+        'totalCost',
+        'dailyCost',
+        'weeklyCost'
+      ].includes(sortBy)
+
+      if (needsStatisticsForSort) {
+        // 批量查询所有keys的统计数据用于排序
+        await Promise.all(
+          apiKeys.map(async (key) => {
+            if (sortBy === 'periodCost' || sortBy === 'totalCost') {
+              const costStats = await redis.getCostStats(key.id)
+              key._sortValue = costStats?.total || 0
+            } else if (sortBy === 'dailyCost') {
+              key._sortValue = (await redis.getDailyCost(key.id)) || 0
+            } else if (sortBy === 'weeklyCost') {
+              key._sortValue = (await redis.getWeeklyCost(key.id)) || 0
+            } else if (sortBy === 'periodTokens') {
+              const usage = await redis.getUsageStats(key.id)
+              key._sortValue = usage?.total?.tokens || 0
+            } else if (sortBy === 'periodRequests') {
+              const usage = await redis.getUsageStats(key.id)
+              key._sortValue = usage?.total?.requests || 0
+            }
+          })
+        )
+
+        // 按统计数据排序
+        apiKeys.sort((a, b) => {
+          const aVal = a._sortValue || 0
+          const bVal = b._sortValue || 0
+          const order = sortOrder === 'asc' ? 1 : -1
+          if (aVal < bVal) {
+            return -1 * order
+          }
+          if (aVal > bVal) {
+            return 1 * order
+          }
+          return 0
+        })
+
+        // 清理临时排序字段
+        apiKeys.forEach((key) => delete key._sortValue)
+      } else {
+        // 基本字段排序
+        apiKeys.sort((a, b) => {
+          let aVal = a[sortBy]
+          let bVal = b[sortBy]
+
+          // 状态字段特殊处理
+          if (sortBy === 'status') {
+            aVal = a.isActive === 'true' ? 1 : 0
+            bVal = b.isActive === 'true' ? 1 : 0
+          }
+          // 处理时间戳字段
+          else if (['createdAt', 'expiresAt', 'lastUsedAt'].includes(sortBy)) {
+            aVal = aVal ? new Date(aVal).getTime() : 0
+            bVal = bVal ? new Date(bVal).getTime() : 0
+          }
+          // 处理数值类型字段
+          else if (['tokenLimit', 'concurrencyLimit'].includes(sortBy)) {
+            aVal = parseInt(aVal || 0)
+            bVal = parseInt(bVal || 0)
+          }
+          // 处理字符串类型字段
+          else if (typeof aVal === 'string') {
+            aVal = aVal.toLowerCase()
+            bVal = typeof bVal === 'string' ? bVal.toLowerCase() : ''
+          }
+
+          const order = sortOrder === 'asc' ? 1 : -1
+          if (aVal < bVal) {
+            return -1 * order
+          }
+          if (aVal > bVal) {
+            return 1 * order
+          }
+          return 0
+        })
+      }
+
+      // 4️⃣ 计算分页
+      const total = apiKeys.length
+      const totalPages = Math.ceil(total / pageSize)
+      const validPage = Math.max(1, Math.min(page, totalPages || 1))
+      const start = (validPage - 1) * pageSize
+      const end = start + pageSize
+
+      // 5️⃣ 获取当前页的keys
+      const pageKeys = apiKeys.slice(start, end)
+
+      // 6️⃣ 并行查询当前页的详细数据（关键性能优化！）
+      const enrichedKeys = await Promise.all(
+        pageKeys.map((key) => this._enrichApiKey(key, client, accountInfoCache))
+      )
+
+      return {
+        data: enrichedKeys,
+        pagination: {
+          page: validPage,
+          pageSize,
+          total,
+          totalPages
+        }
+      }
+    } catch (error) {
+      logger.error('❌ Failed to get paginated API keys:', error)
+      throw error
+    }
+  }
+
   // 📝 更新API Key
   async updateApiKey(keyId, updates) {
     try {
