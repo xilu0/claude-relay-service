@@ -866,6 +866,13 @@ class RedisClient {
     return resetTime
   }
 
+  // 检查周限是否已激活（是否有过使用记录）
+  async isWeeklyCostActive(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const exists = await this.client.exists(windowStartKey)
+    return exists === 1
+  }
+
   // 🚀 加油包相关方法
 
   // 🚀 获取加油包已使用金额
