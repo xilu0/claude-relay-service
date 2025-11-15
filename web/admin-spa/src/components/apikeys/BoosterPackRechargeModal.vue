@@ -197,7 +197,10 @@ import { showToast } from '@/utils/toast'
 
 const props = defineProps({
   isOpen: Boolean,
-  apiKey: Object
+  apiKey: {
+    type: Object,
+    default: () => null
+  }
 })
 
 const emit = defineEmits(['close', 'success'])

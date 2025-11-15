@@ -232,7 +232,10 @@ import Chart from 'chart.js/auto'
 
 const props = defineProps({
   isOpen: Boolean,
-  apiKey: Object
+  apiKey: {
+    type: Object,
+    default: () => null
+  }
 })
 
 const emit = defineEmits(['close'])
