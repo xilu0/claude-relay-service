@@ -328,7 +328,7 @@
                       <i v-else class="fas fa-sort ml-1 text-gray-400" />
                     </th>
                     <th
-                      class="w-[14%] min-w-[120px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                      class="w-[18%] min-w-[160px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
                     >
                       限制
                     </th>
@@ -413,7 +413,7 @@
                       <i v-else class="fas fa-sort ml-1 text-gray-400" />
                     </th>
                     <th
-                      class="operations-column sticky right-0 w-[23%] min-w-[200px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                      class="operations-column sticky right-0 w-[19%] min-w-[200px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
                     >
                       操作
                     </th>
@@ -653,6 +653,24 @@
                                   key.windowRemainingSeconds > 0
                                     ? formatWindowTime(key.windowRemainingSeconds)
                                     : '未激活'
+                                }}
+                              </span>
+                            </div>
+
+                            <!-- 周限截止时间（如果设置了周限制） -->
+                            <div
+                              v-if="key.weeklyCostLimit > 0"
+                              class="mt-1 flex items-center justify-between text-[10px]"
+                            >
+                              <div
+                                class="flex items-center gap-1 text-violet-600 dark:text-violet-300"
+                              >
+                                <i class="fas fa-calendar-week text-[10px]" />
+                                <span class="font-medium">周限截止</span>
+                              </div>
+                              <span class="font-bold text-violet-700 dark:text-violet-300">
+                                {{
+                                  formatWeeklyResetTime(key.weeklyResetTime, key.isWeeklyCostActive)
                                 }}
                               </span>
                             </div>
@@ -1428,6 +1446,20 @@
                             ? formatWindowTime(key.windowRemainingSeconds)
                             : '未激活'
                         }}
+                      </span>
+                    </div>
+
+                    <!-- 周限截止时间（如果设置了周限制） -->
+                    <div
+                      v-if="key.weeklyCostLimit > 0"
+                      class="mt-2 flex items-center justify-between text-xs"
+                    >
+                      <div class="flex items-center gap-1.5 text-violet-600 dark:text-violet-300">
+                        <i class="fas fa-calendar-week text-xs" />
+                        <span class="font-medium">周限截止</span>
+                      </div>
+                      <span class="font-bold text-violet-700 dark:text-violet-300">
+                        {{ formatWeeklyResetTime(key.weeklyResetTime, key.isWeeklyCostActive) }}
                       </span>
                     </div>
                   </div>
@@ -3738,6 +3770,39 @@ const formatWindowTime = (seconds) => {
     return `${minutes}m${secs}s`
   } else {
     return `${secs}s`
+  }
+}
+
+// 格式化周限重置时间（显示为相对时间）
+const formatWeeklyResetTime = (resetTimeStr, isActive) => {
+  // 未激活状态
+  if (!isActive) {
+    return '未激活'
+  }
+
+  // 已激活但没有时间数据
+  if (!resetTimeStr) {
+    return '-'
+  }
+
+  // 已激活，显示倒计时
+  const resetTime = new Date(resetTimeStr)
+  const now = new Date()
+  const diffMs = resetTime - now
+
+  if (diffMs < 0) {
+    return '已过期'
+  }
+
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffDays > 0) {
+    const hours = diffHours % 24
+    return `${diffDays}天${hours}时`
+  } else {
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+    return `${diffHours}h${minutes}m`
   }
 }
 

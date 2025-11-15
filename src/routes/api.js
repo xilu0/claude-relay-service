@@ -6,6 +6,7 @@ const ccrRelayService = require('../services/ccrRelayService')
 const bedrockAccountService = require('../services/bedrockAccountService')
 const unifiedClaudeScheduler = require('../services/unifiedClaudeScheduler')
 const apiKeyService = require('../services/apiKeyService')
+const redis = require('../models/redis')
 const { authenticateApiKey } = require('../middleware/auth')
 const logger = require('../utils/logger')
 const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelHelper')
@@ -889,12 +890,25 @@ router.get('/v1/key-info', authenticateApiKey, async (req, res) => {
   try {
     const usage = await apiKeyService.getUsageStats(req.apiKey.id)
 
+    // 获取周限制重置时间
+    const weeklyResetTime = await redis.getWeeklyCostResetTime(req.apiKey.id)
+
+    // 获取加油包使用情况
+    const boosterPackUsed = await redis.getBoosterPackUsed(req.apiKey.id)
+
     res.json({
       keyInfo: {
         id: req.apiKey.id,
         name: req.apiKey.name,
         tokenLimit: req.apiKey.tokenLimit,
-        usage
+        usage,
+        // 周限制信息
+        weeklyCostLimit: req.apiKey.weeklyCostLimit || 0,
+        weeklyCost: req.apiKey.weeklyCost || 0,
+        weeklyResetTime: weeklyResetTime.toISOString(),
+        // 加油包信息
+        boosterPackAmount: req.apiKey.boosterPackAmount || 0,
+        boosterPackUsed
       },
       timestamp: new Date().toISOString()
     })

@@ -572,7 +572,7 @@ router.get('/api-keys', authenticateAdmin, async (req, res) => {
       }
     }
 
-    // 为每个API Key添加owner的displayName
+    // 为每个API Key添加owner的displayName和周限制状态
     for (const apiKey of apiKeys) {
       // 如果API Key有关联的用户ID，获取用户信息
       if (apiKey.userId) {
@@ -592,6 +592,12 @@ router.get('/api-keys', authenticateAdmin, async (req, res) => {
         apiKey.ownerDisplayName =
           apiKey.createdBy === 'admin' ? 'Admin' : apiKey.createdBy || 'Admin'
       }
+
+      // 添加周限制相关字段（与单个API Key接口保持一致）
+      apiKey.weeklyCost = (await redis.getWeeklyCost(apiKey.id)) || 0
+      const weeklyResetTime = await redis.getWeeklyCostResetTime(apiKey.id)
+      apiKey.weeklyResetTime = weeklyResetTime ? weeklyResetTime.toISOString() : null
+      apiKey.isWeeklyCostActive = await redis.isWeeklyCostActive(apiKey.id)
     }
 
     return res.json({ success: true, data: apiKeys })
@@ -667,6 +673,9 @@ router.get('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
     apiKey.dailyCost = (await redis.getDailyCost(apiKey.id)) || 0
     apiKey.weeklyOpusCost = (await redis.getWeeklyOpusCost(apiKey.id)) || 0
     apiKey.weeklyCost = (await redis.getWeeklyCost(apiKey.id)) || 0
+    const weeklyResetTime = await redis.getWeeklyCostResetTime(apiKey.id)
+    apiKey.weeklyResetTime = weeklyResetTime ? weeklyResetTime.toISOString() : null
+    apiKey.isWeeklyCostActive = await redis.isWeeklyCostActive(apiKey.id)
     apiKey.activationDays = parseInt(apiKey.activationDays || 0)
     apiKey.activationUnit = apiKey.activationUnit || 'days'
     apiKey.expirationMode = apiKey.expirationMode || 'fixed'
