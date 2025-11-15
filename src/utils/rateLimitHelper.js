@@ -63,6 +63,22 @@ async function updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBo
   // 使用加油包时，不更新时间窗口的成本计数
   if (totalCost > 0 && rateLimitInfo.costCountKey && !useBooster) {
     await client.incrbyfloat(rateLimitInfo.costCountKey, totalCost)
+
+    // 同时激活周限窗口（确保逻辑一致性）
+    // 从 costCountKey 提取 keyId: rate_limit:cost:{keyId}
+    const keyId = rateLimitInfo.costCountKey.split(':')[2]
+    if (keyId) {
+      const weeklyWindowKey = `usage:cost:weekly:window_start:${keyId}`
+      const exists = await client.exists(weeklyWindowKey)
+
+      if (!exists) {
+        // 首次使用，创建周限窗口
+        const now = Date.now()
+        const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天
+        await client.set(weeklyWindowKey, now, 'PX', windowDuration)
+        await client.set(`usage:cost:weekly:total:${keyId}`, 0, 'PX', windowDuration)
+      }
+    }
   }
 
   return { totalTokens, totalCost }
