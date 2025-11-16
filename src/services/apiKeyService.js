@@ -528,6 +528,9 @@ class ApiKeyService {
         key.dailyCost = (await redis.getDailyCost(key.id)) || 0
         key.weeklyOpusCost = (await redis.getWeeklyOpusCost(key.id)) || 0
         key.weeklyCost = (await redis.getWeeklyCost(key.id)) || 0
+        const weeklyResetTime = await redis.getWeeklyCostResetTime(key.id)
+        key.weeklyResetTime = weeklyResetTime ? weeklyResetTime.toISOString() : null
+        key.isWeeklyCostActive = (await redis.isWeeklyCostActive(key.id)) || false
         key.activationDays = parseInt(key.activationDays || 0)
         key.activationUnit = key.activationUnit || 'days'
         key.expirationMode = key.expirationMode || 'fixed'
@@ -665,7 +668,9 @@ class ApiKeyService {
         dailyCost,
         weeklyOpusCost,
         weeklyCost,
-        boosterPackUsed
+        boosterPackUsed,
+        weeklyResetTime,
+        isWeeklyCostActive
       ] = await Promise.all([
         redis.getUsageStats(key.id),
         redis.getCostStats(key.id),
@@ -673,7 +678,9 @@ class ApiKeyService {
         redis.getDailyCost(key.id),
         redis.getWeeklyOpusCost(key.id),
         redis.getWeeklyCost(key.id),
-        redis.getBoosterPackUsed(key.id)
+        redis.getBoosterPackUsed(key.id),
+        redis.getWeeklyCostResetTime(key.id),
+        redis.isWeeklyCostActive(key.id)
       ])
 
       // 添加cost信息到usage对象以保持前端兼容性
@@ -705,6 +712,8 @@ class ApiKeyService {
       key.dailyCost = dailyCost || 0
       key.weeklyOpusCost = weeklyOpusCost || 0
       key.weeklyCost = weeklyCost || 0
+      key.weeklyResetTime = weeklyResetTime ? weeklyResetTime.toISOString() : null
+      key.isWeeklyCostActive = isWeeklyCostActive || false
       key.activationDays = parseInt(key.activationDays || 0)
       key.activationUnit = key.activationUnit || 'days'
       key.expirationMode = key.expirationMode || 'fixed'
