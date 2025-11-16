@@ -337,6 +337,12 @@ router.post('/api/user-stats', async (req, res) => {
       logger.warn(`Failed to get current usage for key ${keyId}:`, error)
     }
 
+    // 获取周限制相关数据
+    const weeklyCost = (await redis.getWeeklyCost(keyId)) || 0
+    const weeklyResetTime = await redis.getWeeklyCostResetTime(keyId)
+    const weeklyStartTime = await redis.getWeeklyCostStartTime(keyId)
+    const isWeeklyCostActive = (await redis.isWeeklyCostActive(keyId)) || false
+
     const boundAccountDetails = {}
 
     const accountDetailTasks = []
@@ -423,6 +429,7 @@ router.post('/api/user-stats', async (req, res) => {
         dailyCostLimit: fullKeyData.dailyCostLimit || 0,
         totalCostLimit: fullKeyData.totalCostLimit || 0,
         weeklyOpusCostLimit: parseFloat(fullKeyData.weeklyOpusCostLimit) || 0, // Opus 周费用限制
+        weeklyCostLimit: parseFloat(fullKeyData.weeklyCostLimit) || 0, // 通用周费用限制
         // 当前使用量
         currentWindowRequests,
         currentWindowTokens,
@@ -430,6 +437,18 @@ router.post('/api/user-stats', async (req, res) => {
         currentDailyCost,
         currentTotalCost: totalCost,
         weeklyOpusCost: (await redis.getWeeklyOpusCost(keyId)) || 0, // 当前 Opus 周费用
+        weeklyCost, // 当前通用周费用
+        weeklyStartTime: weeklyStartTime ? weeklyStartTime.toISOString() : null, // 周期开始时间
+        weeklyResetTime: weeklyResetTime ? weeklyResetTime.toISOString() : null, // 周期重置时间
+        isWeeklyCostActive, // 周限制激活状态
+        weeklyRemaining:
+          parseFloat(fullKeyData.weeklyCostLimit) > 0
+            ? Math.max(0, parseFloat(fullKeyData.weeklyCostLimit) - weeklyCost)
+            : 0, // 剩余周额度
+        weeklyUsagePercentage:
+          parseFloat(fullKeyData.weeklyCostLimit) > 0
+            ? (weeklyCost / parseFloat(fullKeyData.weeklyCostLimit)) * 100
+            : 0, // 周使用百分比
         // 时间窗口信息
         windowStartTime,
         windowEndTime,

@@ -873,6 +873,27 @@ class RedisClient {
     return exists === 1
   }
 
+  // 💰 获取周成本开始时间（周期起点时间）
+  async getWeeklyCostStartTime(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+
+    // 获取周期起点时间
+    const windowStart = await this.client.get(windowStartKey)
+
+    if (!windowStart) {
+      // 如果没有周期记录，返回 null
+      logger.debug(`💰 No active weekly cycle for ${keyId}, no start time`)
+      return null
+    }
+
+    // 返回周期起点时间
+    const startTime = new Date(parseInt(windowStart))
+
+    logger.debug(`💰 Weekly cost start time for ${keyId}: ${startTime.toISOString()}`)
+
+    return startTime
+  }
+
   // 🚀 加油包相关方法
 
   // 🚀 获取加油包已使用金额

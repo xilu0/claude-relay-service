@@ -910,6 +910,12 @@ router.get('/v1/key-info', authenticateApiKey, async (req, res) => {
     // 获取加油包使用情况
     const boosterPackUsed = await redis.getBoosterPackUsed(req.apiKey.id)
 
+    // 获取周限制激活状态
+    const isWeeklyCostActive = await redis.isWeeklyCostActive(req.apiKey.id)
+
+    const weeklyCostLimit = req.apiKey.weeklyCostLimit || 0
+    const weeklyCost = req.apiKey.weeklyCost || 0
+
     res.json({
       keyInfo: {
         id: req.apiKey.id,
@@ -917,9 +923,12 @@ router.get('/v1/key-info', authenticateApiKey, async (req, res) => {
         tokenLimit: req.apiKey.tokenLimit,
         usage,
         // 周限制信息
-        weeklyCostLimit: req.apiKey.weeklyCostLimit || 0,
-        weeklyCost: req.apiKey.weeklyCost || 0,
+        weeklyCostLimit,
+        weeklyCost,
         weeklyResetTime: weeklyResetTime.toISOString(),
+        isWeeklyCostActive: isWeeklyCostActive || false,
+        weeklyRemaining: Math.max(0, weeklyCostLimit - weeklyCost),
+        weeklyUsagePercentage: weeklyCostLimit > 0 ? (weeklyCost / weeklyCostLimit) * 100 : 0,
         // 加油包信息
         boosterPackAmount: req.apiKey.boosterPackAmount || 0,
         boosterPackUsed
