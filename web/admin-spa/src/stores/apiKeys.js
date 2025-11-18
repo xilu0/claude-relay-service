@@ -299,6 +299,26 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
     }
   }
 
+  // 💰 重置周限制使用记录
+  const resetWeeklyCost = async (keyId) => {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await apiClient.post(`/admin/api-keys/${keyId}/weekly-cost/reset`)
+      if (response.success) {
+        await fetchApiKeys()
+        return response
+      } else {
+        throw new Error(response.message || '重置周限制使用记录失败')
+      }
+    } catch (err) {
+      error.value = err.message
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
   // 重置store
   const reset = () => {
     apiKeys.value = []
@@ -336,6 +356,8 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
     fetchBoosterPackStats,
     setBoosterPackAmount,
     resetBoosterPackUsage,
+    // 💰 Weekly Cost Actions
+    resetWeeklyCost,
     reset
   }
 })

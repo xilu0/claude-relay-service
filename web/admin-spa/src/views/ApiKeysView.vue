@@ -894,6 +894,15 @@
                             <span class="ml-1 hidden xl:inline">充值加油包</span>
                           </button>
                           <button
+                            v-if="key.weeklyCostLimit && key.weeklyCostLimit > 0"
+                            class="rounded px-2 py-1 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 hover:text-violet-900 dark:hover:bg-violet-900/20"
+                            title="重置周限"
+                            @click="handleResetWeeklyCost(key)"
+                          >
+                            <i class="fas fa-redo" />
+                            <span class="ml-1 hidden xl:inline">重置周限</span>
+                          </button>
+                          <button
                             v-if="
                               key.expiresAt &&
                               (isApiKeyExpired(key.expiresAt) ||
@@ -3340,6 +3349,34 @@ const openBoosterPackRecharge = (key) => {
 const handleBoosterPackRechargeSuccess = () => {
   showBoosterPackRechargeModal.value = false
   loadApiKeys()
+}
+
+// 💰 重置周限制使用记录
+const handleResetWeeklyCost = async (key) => {
+  let confirmed = true
+
+  if (window.showConfirm) {
+    confirmed = await window.showConfirm(
+      '重置周限制',
+      `确定要重置 "${key.name}" 的周限制使用记录吗？\n\n这将清除当前周期的使用数据，下次请求时会开始新的7天周期。`,
+      '确定重置',
+      '取消'
+    )
+  } else {
+    confirmed = confirm(
+      `确定要重置 "${key.name}" 的周限制使用记录吗？\n\n这将清除当前周期的使用数据，下次请求时会开始新的7天周期。`
+    )
+  }
+
+  if (!confirmed) return
+
+  try {
+    await apiKeysStore.resetWeeklyCost(key.id)
+    showToast('success', '周限制重置成功')
+    await loadApiKeys()
+  } catch (error) {
+    showToast('error', error.message || '重置周限制失败')
+  }
 }
 
 // 切换API Key状态（激活/禁用）
