@@ -894,6 +894,19 @@ class RedisClient {
     return startTime
   }
 
+  // 💰 重置周成本记录（清除周期数据，下次请求时会自动创建新周期）
+  async resetWeeklyCost(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
+
+    logger.debug(`💰 Resetting weekly cost for ${keyId}`)
+
+    // 删除周期开始时间和总成本
+    await Promise.all([this.client.del(windowStartKey), this.client.del(totalCostKey)])
+
+    logger.debug(`💰 Weekly cost reset successfully for ${keyId}`)
+  }
+
   // 🚀 加油包相关方法
 
   // 🚀 获取加油包已使用金额

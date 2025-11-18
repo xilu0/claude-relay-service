@@ -2356,6 +2356,30 @@ router.post('/api-keys/:keyId/booster-pack/reset', authenticateAdmin, async (req
   }
 })
 
+// 💰 重置API Key的周限制使用记录
+router.post('/api-keys/:keyId/weekly-cost/reset', authenticateAdmin, async (req, res) => {
+  try {
+    const { keyId } = req.params
+    const adminUsername = req.session?.admin?.username || 'unknown'
+
+    await redis.resetWeeklyCost(keyId)
+
+    logger.success(`💰 Admin ${adminUsername} reset weekly cost for API key ${keyId}`)
+
+    return res.json({
+      success: true,
+      message: '成功重置周限制使用记录'
+    })
+  } catch (error) {
+    logger.error('❌ Failed to reset weekly cost:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: error.message
+    })
+  }
+})
+
 // 🧹 清空所有已删除的API Keys
 router.delete('/api-keys/deleted/clear-all', authenticateAdmin, async (req, res) => {
   try {
