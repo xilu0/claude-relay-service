@@ -6,6 +6,7 @@ const geminiAccountService = require('../services/geminiAccountService')
 const unifiedGeminiScheduler = require('../services/unifiedGeminiScheduler')
 const apiKeyService = require('../services/apiKeyService')
 const sessionHelper = require('../utils/sessionHelper')
+const { parseSSELine } = require('../utils/sseParser')
 
 // 导入 geminiRoutes 中导出的处理函数
 const { handleLoadCodeAssist, handleOnboardUser, handleCountTokens } = require('./geminiRoutes')
@@ -144,7 +145,8 @@ async function handleStandardGenerateContent(req, res) {
     const sessionHash = sessionHelper.generateSessionHash(req.body)
 
     // 标准 Gemini API 请求体直接包含 contents 等字段
-    const { contents, generationConfig, safetySettings, systemInstruction } = req.body
+    const { contents, generationConfig, safetySettings, systemInstruction, tools, toolConfig } =
+      req.body
 
     // 验证必需参数
     if (!contents || !Array.isArray(contents) || contents.length === 0) {
@@ -170,6 +172,15 @@ async function handleStandardGenerateContent(req, res) {
     // 只有在 safetySettings 存在且非空时才添加
     if (safetySettings && safetySettings.length > 0) {
       actualRequestData.safetySettings = safetySettings
+    }
+
+    // 添加工具配置（tools 和 toolConfig）
+    if (tools) {
+      actualRequestData.tools = tools
+    }
+
+    if (toolConfig) {
+      actualRequestData.toolConfig = toolConfig
     }
 
     // 如果有 system instruction，修正格式并添加到请求体
@@ -301,30 +312,9 @@ async function handleStandardGenerateContent(req, res) {
     }
 
     // 返回标准 Gemini API 格式的响应
-    // 内部 API 返回的是 { response: {...} } 格式，需要提取并过滤
-    if (response.response) {
-      // 过滤掉 thought 部分（这是内部 API 特有的）
-      const standardResponse = { ...response.response }
-      if (standardResponse.candidates) {
-        standardResponse.candidates = standardResponse.candidates.map((candidate) => {
-          if (candidate.content && candidate.content.parts) {
-            // 过滤掉 thought: true 的 parts
-            const filteredParts = candidate.content.parts.filter((part) => !part.thought)
-            return {
-              ...candidate,
-              content: {
-                ...candidate.content,
-                parts: filteredParts
-              }
-            }
-          }
-          return candidate
-        })
-      }
-      res.json(standardResponse)
-    } else {
-      res.json(response)
-    }
+    // 内部 API 返回的是 { response: {...} } 格式，需要提取
+    // 注意：不过滤 thought 字段，因为 gemini-cli 会自行处理
+    res.json(response.response || response)
   } catch (error) {
     logger.error(`Error in standard generateContent endpoint`, {
       message: error.message,
@@ -356,7 +346,8 @@ async function handleStandardStreamGenerateContent(req, res) {
     const sessionHash = sessionHelper.generateSessionHash(req.body)
 
     // 标准 Gemini API 请求体直接包含 contents 等字段
-    const { contents, generationConfig, safetySettings, systemInstruction } = req.body
+    const { contents, generationConfig, safetySettings, systemInstruction, tools, toolConfig } =
+      req.body
 
     // 验证必需参数
     if (!contents || !Array.isArray(contents) || contents.length === 0) {
@@ -382,6 +373,15 @@ async function handleStandardStreamGenerateContent(req, res) {
     // 只有在 safetySettings 存在且非空时才添加
     if (safetySettings && safetySettings.length > 0) {
       actualRequestData.safetySettings = safetySettings
+    }
+
+    // 添加工具配置（tools 和 toolConfig）
+    if (tools) {
+      actualRequestData.tools = tools
+    }
+
+    if (toolConfig) {
+      actualRequestData.toolConfig = toolConfig
     }
 
     // 如果有 system instruction，修正格式并添加到请求体
@@ -510,99 +510,102 @@ async function handleStandardStreamGenerateContent(req, res) {
     res.setHeader('X-Accel-Buffering', 'no')
 
     // 处理流式响应并捕获usage数据
+    // 方案 A++：透明转发 + 异步 usage 提取 + SSE 心跳机制
+    let streamBuffer = '' // 缓冲区用于处理不完整的行
     let totalUsage = {
       promptTokenCount: 0,
       candidatesTokenCount: 0,
       totalTokenCount: 0
     }
 
+    // SSE 心跳机制：防止 Clash 等代理 120 秒超时
+    let heartbeatTimer = null
+    let lastDataTime = Date.now()
+    const HEARTBEAT_INTERVAL = 15000 // 15 秒
+
+    const sendHeartbeat = () => {
+      const timeSinceLastData = Date.now() - lastDataTime
+      if (timeSinceLastData >= HEARTBEAT_INTERVAL && !res.destroyed) {
+        res.write('\n') // 发送空行保持连接活跃
+        logger.info(`💓 Sent SSE keepalive (gap: ${(timeSinceLastData / 1000).toFixed(1)}s)`)
+      }
+    }
+
+    heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL)
+
     streamResponse.on('data', (chunk) => {
       try {
+        // 更新最后数据时间
+        lastDataTime = Date.now()
+
+        // 1️⃣ 立即转发原始数据（零延迟，最高优先级）
         if (!res.destroyed) {
-          const chunkStr = chunk.toString()
+          res.write(chunk) // 直接转发 Buffer，无需转换和序列化
+        }
 
-          // 处理 SSE 格式的数据
-          const lines = chunkStr.split('\n')
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const jsonStr = line.substring(6).trim()
-              if (jsonStr && jsonStr !== '[DONE]') {
-                try {
-                  const data = JSON.parse(jsonStr)
+        // 2️⃣ 异步提取 usage 数据（不阻塞转发）
+        // 使用 setImmediate 将解析放到下一个事件循环
+        setImmediate(() => {
+          try {
+            const chunkStr = chunk.toString()
+            if (!chunkStr.trim()) {
+              return
+            }
 
-                  // 捕获 usage 数据
-                  if (data.response?.usageMetadata) {
-                    totalUsage = data.response.usageMetadata
-                  }
+            // 快速检查是否包含 usage 数据（避免不必要的解析）
+            if (!chunkStr.includes('usageMetadata')) {
+              return
+            }
 
-                  // 转换格式：移除 response 包装，直接返回标准 Gemini API 格式
-                  if (data.response) {
-                    // 过滤掉 thought 部分（这是内部 API 特有的）
-                    if (data.response.candidates) {
-                      const filteredCandidates = data.response.candidates
-                        .map((candidate) => {
-                          if (candidate.content && candidate.content.parts) {
-                            // 过滤掉 thought: true 的 parts
-                            const filteredParts = candidate.content.parts.filter(
-                              (part) => !part.thought
-                            )
-                            if (filteredParts.length > 0) {
-                              return {
-                                ...candidate,
-                                content: {
-                                  ...candidate.content,
-                                  parts: filteredParts
-                                }
-                              }
-                            }
-                            return null
-                          }
-                          return candidate
-                        })
-                        .filter(Boolean)
+            // 处理不完整的行
+            streamBuffer += chunkStr
+            const lines = streamBuffer.split('\n')
+            streamBuffer = lines.pop() || ''
 
-                      // 只有当有有效内容时才发送
-                      if (filteredCandidates.length > 0 || data.response.usageMetadata) {
-                        const standardResponse = {
-                          candidates: filteredCandidates,
-                          ...(data.response.usageMetadata && {
-                            usageMetadata: data.response.usageMetadata
-                          }),
-                          ...(data.response.modelVersion && {
-                            modelVersion: data.response.modelVersion
-                          }),
-                          ...(data.response.createTime && { createTime: data.response.createTime }),
-                          ...(data.response.responseId && { responseId: data.response.responseId })
-                        }
-                        res.write(`data: ${JSON.stringify(standardResponse)}\n\n`)
-                      }
-                    }
-                  } else {
-                    // 如果没有 response 包装，直接发送
-                    res.write(`data: ${JSON.stringify(data)}\n\n`)
-                  }
-                } catch (e) {
-                  // 忽略解析错误
+            // 仅解析包含 usage 的行
+            for (const line of lines) {
+              if (!line.trim() || !line.includes('usageMetadata')) {
+                continue
+              }
+
+              try {
+                const parsed = parseSSELine(line)
+                if (parsed.type === 'data' && parsed.data.response?.usageMetadata) {
+                  totalUsage = parsed.data.response.usageMetadata
+                  logger.debug('📊 Captured Gemini usage data:', totalUsage)
                 }
-              } else if (jsonStr === '[DONE]') {
-                // 保持 [DONE] 标记
-                res.write(`${line}\n\n`)
+              } catch (parseError) {
+                // 解析失败但不影响转发
+                logger.warn('⚠️ Failed to parse usage line:', parseError.message)
               }
             }
+          } catch (error) {
+            // 提取失败但不影响转发
+            logger.warn('⚠️ Error extracting usage data:', error.message)
           }
-        }
+        })
       } catch (error) {
         logger.error('Error processing stream chunk:', error)
+        // 不中断流，继续处理后续数据
       }
     })
 
-    streamResponse.on('end', async () => {
+    streamResponse.on('end', () => {
       logger.info('Stream completed successfully')
 
-      // 记录使用统计
+      // 清理心跳定时器
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+
+      // 立即结束响应，不阻塞
+      res.end()
+
+      // 异步记录使用统计（不阻塞响应）
       if (totalUsage.totalTokenCount > 0) {
-        try {
-          await apiKeyService.recordUsage(
+        apiKeyService
+          .recordUsage(
             req.apiKey.id,
             totalUsage.promptTokenCount || 0,
             totalUsage.candidatesTokenCount || 0,
@@ -611,20 +614,32 @@ async function handleStandardStreamGenerateContent(req, res) {
             model,
             account.id
           )
-          logger.info(
-            `📊 Recorded Gemini stream usage - Input: ${totalUsage.promptTokenCount}, Output: ${totalUsage.candidatesTokenCount}, Total: ${totalUsage.totalTokenCount}`
-          )
-        } catch (error) {
-          logger.error('Failed to record Gemini usage:', error)
-        }
+          .then(() => {
+            logger.info(
+              `📊 Recorded Gemini stream usage - Input: ${totalUsage.promptTokenCount}, Output: ${totalUsage.candidatesTokenCount}, Total: ${totalUsage.totalTokenCount}`
+            )
+          })
+          .catch((error) => {
+            logger.error('Failed to record Gemini usage:', error)
+          })
+      } else {
+        logger.warn(
+          `⚠️ Stream completed without usage data - totalTokenCount: ${totalUsage.totalTokenCount}`
+        )
       }
-
-      res.end()
     })
 
     streamResponse.on('error', (error) => {
       logger.error('Stream error:', error)
+
+      // 清理心跳定时器
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+
       if (!res.headersSent) {
+        // 如果还没发送响应头，可以返回正常的错误响应
         res.status(500).json({
           error: {
             message: error.message || 'Stream error',
@@ -632,6 +647,27 @@ async function handleStandardStreamGenerateContent(req, res) {
           }
         })
       } else {
+        // 如果已经开始流式传输，发送 SSE 格式的错误事件和结束标记
+        // 这样客户端可以正确识别流的结束，避免 "Premature close" 错误
+        if (!res.destroyed) {
+          try {
+            // 发送错误事件（SSE 格式）
+            res.write(
+              `data: ${JSON.stringify({
+                error: {
+                  message: error.message || 'Stream error',
+                  type: 'stream_error',
+                  code: error.code
+                }
+              })}\n\n`
+            )
+
+            // 发送 SSE 结束标记
+            res.write('data: [DONE]\n\n')
+          } catch (writeError) {
+            logger.error('Error sending error event:', writeError)
+          }
+        }
         res.end()
       }
     })

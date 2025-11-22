@@ -1,6 +1,7 @@
 const redisClient = require('../models/redis')
 const { v4: uuidv4 } = require('uuid')
 const crypto = require('crypto')
+const https = require('https')
 const config = require('../../config/config')
 const logger = require('../utils/logger')
 const { OAuth2Client } = require('google-auth-library')
@@ -20,6 +21,18 @@ const LRUCache = require('../utils/lruCache')
 const OAUTH_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com'
 const OAUTH_CLIENT_SECRET = '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'
 const OAUTH_SCOPES = ['https://www.googleapis.com/auth/cloud-platform']
+
+// 🌐 TCP Keep-Alive Agent 配置
+// 解决长时间流式请求中 NAT/防火墙空闲超时导致的连接中断问题
+const keepAliveAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000, // 每30秒发送一次 keep-alive 探测
+  timeout: 120000, // 120秒连接超时
+  maxSockets: 100, // 最大并发连接数
+  maxFreeSockets: 10 // 保持的空闲连接数
+})
+
+logger.info('🌐 Gemini HTTPS Agent initialized with TCP Keep-Alive support')
 
 // 加密相关常量
 const ALGORITHM = 'aes-256-cbc'
@@ -1060,6 +1073,45 @@ async function getOauthClient(accessToken, refreshToken, proxyConfig = null) {
   return client
 }
 
+// 通用的 Code Assist API 转发函数（用于简单的请求/响应端点）
+// 适用于：loadCodeAssist, onboardUser, countTokens, listExperiments 等不需要特殊处理的端点
+async function forwardToCodeAssist(client, apiMethod, requestBody, proxyConfig = null) {
+  const axios = require('axios')
+  const CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com'
+  const CODE_ASSIST_API_VERSION = 'v1internal'
+
+  const { token } = await client.getAccessToken()
+  const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
+
+  logger.info(`📡 ${apiMethod} API调用开始`)
+
+  const axiosConfig = {
+    url: `${CODE_ASSIST_ENDPOINT}/${CODE_ASSIST_API_VERSION}:${apiMethod}`,
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    data: requestBody,
+    timeout: 30000
+  }
+
+  // 添加代理配置
+  if (proxyAgent) {
+    // 只设置 httpsAgent，因为目标 URL 是 HTTPS (cloudcode-pa.googleapis.com)
+    axiosConfig.httpsAgent = proxyAgent
+    axiosConfig.proxy = false
+    logger.info(`🌐 Using proxy for ${apiMethod}: ${ProxyHelper.getProxyDescription(proxyConfig)}`)
+  } else {
+    logger.debug(`🌐 No proxy configured for ${apiMethod}`)
+  }
+
+  const response = await axios(axiosConfig)
+
+  logger.info(`✅ ${apiMethod} API调用成功`)
+  return response.data
+}
+
 // 调用 Google Code Assist API 的 loadCodeAssist 方法（支持代理）
 async function loadCodeAssist(client, projectId = null, proxyConfig = null) {
   const axios = require('axios')
@@ -1068,52 +1120,55 @@ async function loadCodeAssist(client, projectId = null, proxyConfig = null) {
 
   const { token } = await client.getAccessToken()
   const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
+  // 🔍 只有个人账户（无 projectId）才需要调用 tokeninfo/userinfo
+  // 这些调用有助于 Google 获取临时 projectId
+  if (!projectId) {
+    const tokenInfoConfig = {
+      url: 'https://oauth2.googleapis.com/tokeninfo',
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      data: new URLSearchParams({ access_token: token }).toString(),
+      timeout: 15000
+    }
 
-  const tokenInfoConfig = {
-    url: 'https://oauth2.googleapis.com/tokeninfo',
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    data: new URLSearchParams({ access_token: token }).toString(),
-    timeout: 15000
-  }
+    if (proxyAgent) {
+      tokenInfoConfig.httpAgent = proxyAgent
+      tokenInfoConfig.httpsAgent = proxyAgent
+      tokenInfoConfig.proxy = false
+    }
 
-  if (proxyAgent) {
-    tokenInfoConfig.httpAgent = proxyAgent
-    tokenInfoConfig.httpsAgent = proxyAgent
-    tokenInfoConfig.proxy = false
-  }
+    try {
+      await axios(tokenInfoConfig)
+      logger.info('📋 tokeninfo 接口验证成功')
+    } catch (error) {
+      logger.warn('⚠️ tokeninfo 接口调用失败:', error.message)
+    }
 
-  try {
-    await axios(tokenInfoConfig)
-    logger.info('📋 tokeninfo 接口验证成功')
-  } catch (error) {
-    logger.info('tokeninfo 接口获取失败', error)
-  }
+    const userInfoConfig = {
+      url: 'https://www.googleapis.com/oauth2/v2/userinfo',
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: '*/*'
+      },
+      timeout: 15000
+    }
 
-  const userInfoConfig = {
-    url: 'https://www.googleapis.com/oauth2/v2/userinfo',
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: '*/*'
-    },
-    timeout: 15000
-  }
+    if (proxyAgent) {
+      userInfoConfig.httpAgent = proxyAgent
+      userInfoConfig.httpsAgent = proxyAgent
+      userInfoConfig.proxy = false
+    }
 
-  if (proxyAgent) {
-    userInfoConfig.httpAgent = proxyAgent
-    userInfoConfig.httpsAgent = proxyAgent
-    userInfoConfig.proxy = false
-  }
-
-  try {
-    await axios(userInfoConfig)
-    logger.info('📋 userinfo 接口获取成功')
-  } catch (error) {
-    logger.info('userinfo 接口获取失败', error)
+    try {
+      await axios(userInfoConfig)
+      logger.info('📋 userinfo 接口获取成功')
+    } catch (error) {
+      logger.warn('⚠️ userinfo 接口调用失败:', error.message)
+    }
   }
 
   // 创建ClientMetadata
@@ -1150,7 +1205,7 @@ async function loadCodeAssist(client, projectId = null, proxyConfig = null) {
 
   // 添加代理配置
   if (proxyAgent) {
-    axiosConfig.httpAgent = proxyAgent
+    // 只设置 httpsAgent，因为目标 URL 是 HTTPS (cloudcode-pa.googleapis.com)
     axiosConfig.httpsAgent = proxyAgent
     axiosConfig.proxy = false
     logger.info(
@@ -1359,7 +1414,7 @@ async function countTokens(client, contents, model = 'gemini-2.0-flash-exp', pro
   // 添加代理配置
   const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
   if (proxyAgent) {
-    axiosConfig.httpAgent = proxyAgent
+    // 只设置 httpsAgent，因为目标 URL 是 HTTPS (cloudcode-pa.googleapis.com)
     axiosConfig.httpsAgent = proxyAgent
     axiosConfig.proxy = false
     logger.info(
@@ -1430,20 +1485,22 @@ async function generateContent(
       'Content-Type': 'application/json'
     },
     data: request,
-    timeout: 60000 // 生成内容可能需要更长时间
+    timeout: 600000 // 生成内容可能需要更长时间
   }
 
   // 添加代理配置
   const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
   if (proxyAgent) {
-    axiosConfig.httpAgent = proxyAgent
+    // 只设置 httpsAgent，因为目标 URL 是 HTTPS (cloudcode-pa.googleapis.com)
     axiosConfig.httpsAgent = proxyAgent
     axiosConfig.proxy = false
     logger.info(
       `🌐 Using proxy for Gemini generateContent: ${ProxyHelper.getProxyDescription(proxyConfig)}`
     )
   } else {
-    logger.debug('🌐 No proxy configured for Gemini generateContent')
+    // 没有代理时，使用 keepAlive agent 防止长时间请求被中断
+    axiosConfig.httpsAgent = keepAliveAgent
+    logger.debug('🌐 Using keepAlive agent for Gemini generateContent')
   }
 
   const response = await axios(axiosConfig)
@@ -1506,20 +1563,23 @@ async function generateContentStream(
     },
     data: request,
     responseType: 'stream',
-    timeout: 60000
+    timeout: 0 // 流式请求不设置超时限制，由 keepAlive 和 AbortSignal 控制
   }
 
   // 添加代理配置
   const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
   if (proxyAgent) {
-    axiosConfig.httpAgent = proxyAgent
+    // 只设置 httpsAgent，因为目标 URL 是 HTTPS (cloudcode-pa.googleapis.com)
+    // 同时设置 httpAgent 和 httpsAgent 可能导致 axios/follow-redirects 选择错误的协议
     axiosConfig.httpsAgent = proxyAgent
     axiosConfig.proxy = false
     logger.info(
       `🌐 Using proxy for Gemini streamGenerateContent: ${ProxyHelper.getProxyDescription(proxyConfig)}`
     )
   } else {
-    logger.debug('🌐 No proxy configured for Gemini streamGenerateContent')
+    // 没有代理时，使用 keepAlive agent 防止长时间流式请求被中断
+    axiosConfig.httpsAgent = keepAliveAgent
+    logger.debug('🌐 Using keepAlive agent for Gemini streamGenerateContent')
   }
 
   // 如果提供了中止信号，添加到配置中
@@ -1573,6 +1633,7 @@ module.exports = {
   getAccountRateLimitInfo,
   isTokenExpired,
   getOauthClient,
+  forwardToCodeAssist, // 通用转发函数
   loadCodeAssist,
   getOnboardTier,
   onboardUser,

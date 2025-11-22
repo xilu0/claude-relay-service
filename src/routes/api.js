@@ -103,6 +103,20 @@ async function handleMessagesRequest(req, res) {
     // 检查是否为流式请求
     const isStream = req.body.stream === true
 
+    // 临时修复新版本客户端，删除context_management字段，避免报错
+    if (req.body.context_management) {
+      delete req.body.context_management
+    }
+
+    // 遍历tools数组，删除input_examples字段
+    if (req.body.tools && Array.isArray(req.body.tools)) {
+      req.body.tools.forEach((tool) => {
+        if (tool && typeof tool === 'object' && tool.input_examples) {
+          delete tool.input_examples
+        }
+      })
+    }
+
     logger.api(
       `🚀 Processing ${isStream ? 'stream' : 'non-stream'} request for key: ${req.apiKey.name}`
     )
@@ -1083,6 +1097,18 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
 
       if (error.httpStatus) {
         return res.status(error.httpStatus).json(error.errorPayload)
+      }
+
+      // 客户端断开连接不是错误，使用 INFO 级别
+      if (error.message === 'Client disconnected') {
+        logger.info('🔌 Client disconnected during token count request')
+        if (!res.headersSent) {
+          return res.status(499).end() // 499 Client Closed Request
+        }
+        if (!res.destroyed && !res.finished) {
+          res.end()
+        }
+        return
       }
 
       logger.error('❌ Token count error:', error)
