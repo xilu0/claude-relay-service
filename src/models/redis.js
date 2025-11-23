@@ -50,6 +50,12 @@ function getWeekStringInTimezone(date = new Date()) {
   return `${year}-W${String(weekNumber).padStart(2, '0')}`
 }
 
+// 获取配置时区的月份字符串 (YYYY-MM)
+function getMonthStringInTimezone(date = new Date()) {
+  const tzDate = getDateInTimezone(date)
+  return `${tzDate.getUTCFullYear()}-${String(tzDate.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
 class RedisClient {
   constructor() {
     this.client = null
@@ -645,6 +651,98 @@ class RedisClient {
         dailyTokens: Math.round((totalTokens / daysSinceCreated) * 100) / 100
       }
     }
+  }
+
+  /**
+   * 📊 获取API Key的历史使用统计数据（按小时、天或月）
+   * @param {string} keyId - API Key ID
+   * @param {'hourly'|'daily'|'monthly'} granularity - 时间粒度
+   * @param {number} limit - 要查询的时间段数量 (1-100)
+   * @returns {Promise<Array<Object>>} 历史统计数据数组
+   */
+  async getHistoricalUsageStats(keyId, granularity, limit) {
+    // 参数验证
+    if (!limit || limit < 1 || limit > 100) {
+      throw new Error('Invalid limit. Must be between 1 and 100.')
+    }
+
+    const client = this.getClientSafe()
+    const now = new Date()
+    const dataPoints = []
+    const pipeline = client.pipeline()
+    const keysToFetch = []
+
+    for (let i = 0; i < limit; i++) {
+      let date
+      let key = ''
+      let timestamp = ''
+
+      // 根据粒度计算日期和构建key
+      // 使用毫秒偏移确保与配置时区的 key 字符串一致
+      switch (granularity) {
+        case 'hourly':
+          // 每小时 3600000 毫秒
+          date = new Date(now.getTime() - i * 3600000)
+          timestamp = `${getDateStringInTimezone(date)}:${String(getHourInTimezone(date)).padStart(2, '0')}`
+          key = `usage:hourly:${keyId}:${timestamp}`
+          break
+        case 'daily':
+          // 每天 86400000 毫秒
+          date = new Date(now.getTime() - i * 86400000)
+          timestamp = getDateStringInTimezone(date)
+          key = `usage:daily:${keyId}:${timestamp}`
+          break
+        case 'monthly':
+          // 月份计算需要特殊处理，避免边界问题
+          // 先获取当前配置时区的年月，再进行月份偏移
+          date = new Date(now)
+          // 先设置日期为1号，避免月份溢出问题（如3月31日减1个月）
+          date.setUTCDate(1)
+          date.setUTCMonth(date.getUTCMonth() - i)
+          timestamp = getMonthStringInTimezone(date)
+          key = `usage:monthly:${keyId}:${timestamp}`
+          break
+        default:
+          throw new Error('Invalid granularity. Must be "hourly", "daily", or "monthly".')
+      }
+
+      keysToFetch.push({ key, timestamp: date.getTime() }) // 存储原始时间戳以便排序
+      pipeline.hgetall(key)
+    }
+
+    const results = await pipeline.exec()
+
+    // 假设results的顺序与keysToFetch的顺序一致
+    for (let i = 0; i < keysToFetch.length; i++) {
+      const { key, timestamp } = keysToFetch[i]
+      const [error, data] = results[i]
+
+      if (error) {
+        logger.error(`❌ Failed to fetch historical data for key ${key}:`, error)
+        continue
+      }
+
+      // 处理数据，确保所有字段都是数字，并提供默认值
+      const requests = parseInt(data?.requests || '0')
+      const inputTokens = parseInt(data?.inputTokens || '0')
+      const outputTokens = parseInt(data?.outputTokens || '0')
+      const cacheCreateTokens = parseInt(data?.cacheCreateTokens || '0')
+      const cacheReadTokens = parseInt(data?.cacheReadTokens || '0')
+      const allTokens = parseInt(data?.allTokens || '0')
+
+      dataPoints.push({
+        timestamp, // 返回时间戳，前端可以格式化
+        requests,
+        inputTokens,
+        outputTokens,
+        cacheCreateTokens,
+        cacheReadTokens,
+        allTokens
+      })
+    }
+
+    // 确保数据点按时间升序排列，方便前端展示
+    return dataPoints.sort((a, b) => a.timestamp - b.timestamp)
   }
 
   async addUsageRecord(keyId, record, maxRecords = 200) {
