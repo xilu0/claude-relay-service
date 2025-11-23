@@ -959,4 +959,130 @@ router.post('/api/user-model-stats', async (req, res) => {
   }
 })
 
+// 📊 用户历史统计查询接口 - 安全的自查询接口
+router.post('/api/user-historical-stats', async (req, res) => {
+  try {
+    const { apiKey, apiId, granularity } = req.body
+
+    let keyData
+    let keyId
+
+    // 验证 API Key 或 API ID
+    if (apiId) {
+      if (
+        typeof apiId !== 'string' ||
+        !apiId.match(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i)
+      ) {
+        return res.status(400).json({
+          error: 'Invalid API ID format',
+          message: 'API ID must be a valid UUID'
+        })
+      }
+      keyData = await redis.getApiKey(apiId)
+      if (!keyData || Object.keys(keyData).length === 0 || keyData.isActive !== 'true') {
+        logger.security(
+          `🔒 API key not found or inactive for ID: ${apiId} from ${req.ip || 'unknown'}`
+        )
+        return res.status(404).json({
+          error: 'API key not found or inactive',
+          message: 'The specified API key does not exist or is not active'
+        })
+      }
+      keyId = apiId
+    } else if (apiKey) {
+      const validation = await apiKeyService.validateApiKeyForStats(apiKey)
+      if (!validation.valid) {
+        const clientIP = req.ip || req.connection?.remoteAddress || 'unknown'
+        logger.security(
+          `🔒 Invalid API key in user historical stats query: ${validation.error} from ${clientIP}`
+        )
+        return res.status(401).json({
+          error: 'Invalid API key',
+          message: validation.error
+        })
+      }
+      ;({ keyData } = validation)
+      keyId = keyData.id
+    } else {
+      logger.security(
+        `🔒 Missing API key or ID in user historical stats query from ${req.ip || 'unknown'}`
+      )
+      return res.status(400).json({
+        error: 'API Key or ID is required',
+        message: 'Please provide your API Key or API ID'
+      })
+    }
+
+    // 验证 granularity（类型和值）
+    if (
+      !granularity ||
+      typeof granularity !== 'string' ||
+      !['hourly', 'daily', 'monthly'].includes(granularity)
+    ) {
+      return res.status(400).json({
+        error: 'Invalid granularity',
+        message: 'Granularity must be "hourly", "daily", or "monthly"'
+      })
+    }
+
+    let limit
+    switch (granularity) {
+      case 'hourly':
+        limit = 24 // Past 24 hours
+        break
+      case 'daily':
+        limit = 30 // Past 30 days
+        break
+      case 'monthly':
+        limit = 12 // Past 12 months
+        break
+      default:
+        limit = 0 // Should not happen due to validation
+    }
+
+    logger.api(
+      `📊 User historical stats query for key: ${keyData.name} (${keyId}), granularity: ${granularity}, limit: ${limit} from ${req.ip || 'unknown'}`
+    )
+
+    // 获取历史使用数据
+    const historicalData = await redis.getHistoricalUsageStats(keyId, granularity, limit)
+
+    // 为每个数据点计算费用（使用通用模型估算，因为历史聚合数据不包含模型信息）
+    const dataWithCost = historicalData.map((dataPoint) => {
+      const usage = {
+        input_tokens: dataPoint.inputTokens || 0,
+        output_tokens: dataPoint.outputTokens || 0,
+        cache_creation_input_tokens: dataPoint.cacheCreateTokens || 0,
+        cache_read_input_tokens: dataPoint.cacheReadTokens || 0
+      }
+      const costResult = CostCalculator.calculateCost(usage, 'claude-sonnet-4-20250514')
+
+      return {
+        timestamp: dataPoint.timestamp,
+        requests: dataPoint.requests,
+        tokens: dataPoint.allTokens,
+        inputTokens: dataPoint.inputTokens,
+        outputTokens: dataPoint.outputTokens,
+        cost: costResult.costs.total,
+        formattedCost: costResult.formatted.total
+      }
+    })
+
+    return res.json({
+      success: true,
+      data: dataWithCost,
+      granularity,
+      limit,
+      costNote:
+        'Cost is estimated using claude-sonnet-4-20250514 pricing as historical data does not include model information'
+    })
+  } catch (error) {
+    logger.error('❌ Failed to process user historical stats query:', error)
+    return res.status(500).json({
+      error: 'Internal server error',
+      message: 'Failed to retrieve historical statistics'
+    })
+  }
+})
+
 module.exports = router
