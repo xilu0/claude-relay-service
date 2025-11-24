@@ -290,7 +290,7 @@ const loadData = async () => {
     const statsData = await apiKeysStore.fetchBoosterPackStats(props.apiKey.id, 'day')
     stats.value = statsData
   } catch (error) {
-    console.error('Failed to load booster pack data:', error)
+    // console.error('Failed to load booster pack data:', error)
   } finally {
     loading.value = false
   }
@@ -308,7 +308,7 @@ const renderChart = () => {
 
     const ctx = chartCanvas.value.getContext('2d')
     if (!ctx) {
-      console.error('Failed to get canvas context')
+      // console.error('Failed to get canvas context')
       return
     }
 
@@ -317,7 +317,7 @@ const renderChart = () => {
 
     // Validate data
     if (periods.length === 0 || amounts.some((amount) => isNaN(amount))) {
-      console.warn('Invalid chart data', { periods, amounts })
+      // console.warn('Invalid chart data', { periods, amounts })
       return
     }
 
@@ -383,7 +383,7 @@ const renderChart = () => {
       }
     })
   } catch (error) {
-    console.error('Failed to render chart:', error)
+    // console.error('Failed to render chart:', error)
     // Optionally show error message to user
   }
 }
