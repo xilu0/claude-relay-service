@@ -3,9 +3,12 @@ const router = express.Router()
 const { authenticateApiKey } = require('../middleware/auth')
 const logger = require('../utils/logger')
 const geminiAccountService = require('../services/geminiAccountService')
+const geminiApiAccountService = require('../services/geminiApiAccountService')
 const unifiedGeminiScheduler = require('../services/unifiedGeminiScheduler')
 const apiKeyService = require('../services/apiKeyService')
 const sessionHelper = require('../utils/sessionHelper')
+const axios = require('axios')
+const ProxyHelper = require('../utils/proxyHelper')
 
 // 导入 geminiRoutes 中导出的处理函数
 const { handleLoadCodeAssist, handleOnboardUser, handleCountTokens } = require('./geminiRoutes')
@@ -136,6 +139,8 @@ async function normalizeAxiosStreamError(error) {
 async function handleStandardGenerateContent(req, res) {
   let account = null
   let sessionHash = null
+  let accountId = null // 提升到外部作用域
+  let isApiAccount = false // 提升到外部作用域
 
   try {
     if (!ensureGeminiPermission(req, res)) {
@@ -210,20 +215,48 @@ async function handleStandardGenerateContent(req, res) {
     }
 
     // 使用统一调度选择账号
-    const { accountId } = await unifiedGeminiScheduler.selectAccountForApiKey(
+    const schedulerResult = await unifiedGeminiScheduler.selectAccountForApiKey(
       req.apiKey,
       sessionHash,
-      model
+      model,
+      { allowApiAccounts: true } // 允许调度 API 账户
     )
-    account = await geminiAccountService.getAccount(accountId)
-    const { accessToken, refreshToken } = account
+    ;({ accountId } = schedulerResult)
+    const { accountType } = schedulerResult
+
+    // 判断账户类型：根据 accountType 判断，而非 accountId 前缀
+    isApiAccount = accountType === 'gemini-api' // 赋值而不是声明
+    const actualAccountId = accountId // accountId 已经是实际 ID，无需处理前缀
 
     const version = req.path.includes('v1beta') ? 'v1beta' : 'v1'
-    logger.info(`Standard Gemini API generateContent request (${version})`, {
-      model,
-      projectId: account.projectId,
-      apiKeyId: req.apiKey?.id || 'unknown'
-    })
+
+    if (isApiAccount) {
+      // Gemini API 账户：使用 API Key 直接请求
+      account = await geminiApiAccountService.getAccount(actualAccountId)
+      if (!account) {
+        return res.status(404).json({
+          error: {
+            message: 'Gemini API account not found',
+            type: 'account_not_found'
+          }
+        })
+      }
+
+      logger.info(`Standard Gemini API generateContent request (${version}) - API Key Account`, {
+        model,
+        accountId: actualAccountId,
+        apiKeyId: req.apiKey?.id || 'unknown'
+      })
+    } else {
+      // OAuth 账户：使用原有流程
+      account = await geminiAccountService.getAccount(actualAccountId)
+
+      logger.info(`Standard Gemini API generateContent request (${version}) - OAuth Account`, {
+        model,
+        projectId: account.projectId,
+        apiKeyId: req.apiKey?.id || 'unknown'
+      })
+    }
 
     // 解析账户的代理配置
     let proxyConfig = null
@@ -235,62 +268,105 @@ async function handleStandardGenerateContent(req, res) {
       }
     }
 
-    const client = await geminiAccountService.getOauthClient(accessToken, refreshToken, proxyConfig)
+    let response
 
-    // 项目ID优先级：账户配置的项目ID > 临时项目ID > 尝试获取
-    let effectiveProjectId = account.projectId || account.tempProjectId || null
+    if (isApiAccount) {
+      // Gemini API 账户：直接使用 API Key 请求
+      // baseUrl 填写域名，如 https://generativelanguage.googleapis.com，版本固定为 v1beta
+      const apiUrl = `${account.baseUrl}/v1beta/models/${model}:generateContent?key=${account.apiKey}`
 
-    // 如果没有任何项目ID，尝试调用 loadCodeAssist 获取
-    if (!effectiveProjectId) {
-      try {
-        logger.info('📋 No projectId available, attempting to fetch from loadCodeAssist...')
-        const loadResponse = await geminiAccountService.loadCodeAssist(client, null, proxyConfig)
-
-        if (loadResponse.cloudaicompanionProject) {
-          effectiveProjectId = loadResponse.cloudaicompanionProject
-          // 保存临时项目ID
-          await geminiAccountService.updateTempProjectId(accountId, effectiveProjectId)
-          logger.info(`📋 Fetched and cached temporary projectId: ${effectiveProjectId}`)
+      // 构建 Axios 配置
+      const axiosConfig = {
+        method: 'POST',
+        url: apiUrl,
+        data: actualRequestData,
+        headers: {
+          'Content-Type': 'application/json'
         }
-      } catch (loadError) {
-        logger.warn('Failed to fetch projectId from loadCodeAssist:', loadError.message)
       }
-    }
 
-    // 如果还是没有项目ID，返回错误
-    if (!effectiveProjectId) {
-      return res.status(403).json({
-        error: {
-          message:
-            'This account requires a project ID to be configured. Please configure a project ID in the account settings.',
-          type: 'configuration_required'
+      // 添加代理配置
+      if (proxyConfig) {
+        const proxyHelper = new ProxyHelper()
+        axiosConfig.httpsAgent = proxyHelper.createProxyAgent(proxyConfig)
+        axiosConfig.httpAgent = proxyHelper.createProxyAgent(proxyConfig)
+      }
+
+      try {
+        const apiResponse = await axios(axiosConfig)
+        response = { response: apiResponse.data }
+      } catch (error) {
+        logger.error('Gemini API request failed:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data
+        })
+        throw error
+      }
+    } else {
+      // OAuth 账户：使用原有流程
+      const { accessToken, refreshToken } = account
+      const client = await geminiAccountService.getOauthClient(
+        accessToken,
+        refreshToken,
+        proxyConfig
+      )
+
+      // 项目ID优先级：账户配置的项目ID > 临时项目ID > 尝试获取
+      let effectiveProjectId = account.projectId || account.tempProjectId || null
+
+      // 如果没有任何项目ID，尝试调用 loadCodeAssist 获取
+      if (!effectiveProjectId) {
+        try {
+          logger.info('📋 No projectId available, attempting to fetch from loadCodeAssist...')
+          const loadResponse = await geminiAccountService.loadCodeAssist(client, null, proxyConfig)
+
+          if (loadResponse.cloudaicompanionProject) {
+            effectiveProjectId = loadResponse.cloudaicompanionProject
+            // 保存临时项目ID
+            await geminiAccountService.updateTempProjectId(actualAccountId, effectiveProjectId)
+            logger.info(`📋 Fetched and cached temporary projectId: ${effectiveProjectId}`)
+          }
+        } catch (loadError) {
+          logger.warn('Failed to fetch projectId from loadCodeAssist:', loadError.message)
         }
+      }
+
+      // 如果还是没有项目ID，返回错误
+      if (!effectiveProjectId) {
+        return res.status(403).json({
+          error: {
+            message:
+              'This account requires a project ID to be configured. Please configure a project ID in the account settings.',
+            type: 'configuration_required'
+          }
+        })
+      }
+
+      logger.info('📋 Standard API 项目ID处理逻辑', {
+        accountProjectId: account.projectId,
+        tempProjectId: account.tempProjectId,
+        effectiveProjectId,
+        decision: account.projectId
+          ? '使用账户配置'
+          : account.tempProjectId
+            ? '使用临时项目ID'
+            : '从loadCodeAssist获取'
       })
+
+      // 生成一个符合 Gemini CLI 格式的 user_prompt_id
+      const userPromptId = `${require('crypto').randomUUID()}########0`
+
+      // 调用内部 API（cloudcode-pa）
+      response = await geminiAccountService.generateContent(
+        client,
+        { model, request: actualRequestData },
+        userPromptId, // 使用生成的 user_prompt_id
+        effectiveProjectId, // 使用处理后的项目ID
+        req.apiKey?.id, // 使用 API Key ID 作为 session ID
+        proxyConfig
+      )
     }
-
-    logger.info('📋 Standard API 项目ID处理逻辑', {
-      accountProjectId: account.projectId,
-      tempProjectId: account.tempProjectId,
-      effectiveProjectId,
-      decision: account.projectId
-        ? '使用账户配置'
-        : account.tempProjectId
-          ? '使用临时项目ID'
-          : '从loadCodeAssist获取'
-    })
-
-    // 生成一个符合 Gemini CLI 格式的 user_prompt_id
-    const userPromptId = `${require('crypto').randomUUID()}########0`
-
-    // 调用内部 API（cloudcode-pa）
-    const response = await geminiAccountService.generateContent(
-      client,
-      { model, request: actualRequestData },
-      userPromptId, // 使用生成的 user_prompt_id
-      effectiveProjectId, // 使用处理后的项目ID
-      req.apiKey?.id, // 使用 API Key ID 作为 session ID
-      proxyConfig
-    )
 
     // 记录使用统计
     if (response?.response?.usageMetadata) {
@@ -303,7 +379,7 @@ async function handleStandardGenerateContent(req, res) {
           0, // cacheCreateTokens
           0, // cacheReadTokens
           model,
-          account.id,
+          accountId, // 账户 ID
           req.apiKey.useBooster || false // 传递是否使用加油包
         )
         logger.info(
@@ -327,15 +403,20 @@ async function handleStandardGenerateContent(req, res) {
       stack: error.stack
     })
 
-    // 处理速率限制
-    if (error.response?.status === 429) {
-      logger.warn(`⚠️ Gemini account ${account.id} rate limited (Standard API), marking as limited`)
-      try {
-        await unifiedGeminiScheduler.markAccountRateLimited(account.id, 'gemini', sessionHash)
-      } catch (limitError) {
-        logger.warn('Failed to mark account as rate limited in scheduler:', limitError)
-      }
-    }
+    // 处理速率限制 暂时去掉此处的标记限流的处理
+    // if (error.response?.status === 429 && accountId) {
+    //   logger.warn(`⚠️ Gemini account ${accountId} rate limited (Standard API), marking as limited`)
+    //   try {
+    //     const rateLimitAccountType = isApiAccount ? 'gemini-api' : 'gemini'
+    //     await unifiedGeminiScheduler.markAccountRateLimited(
+    //       accountId, // 账户 ID
+    //       rateLimitAccountType,
+    //       sessionHash
+    //     )
+    //   } catch (limitError) {
+    //     logger.warn('Failed to mark account as rate limited in scheduler:', limitError)
+    //   }
+    // }
 
     res.status(500).json({
       error: {
@@ -351,6 +432,8 @@ async function handleStandardStreamGenerateContent(req, res) {
   let abortController = null
   let account = null
   let sessionHash = null
+  let accountId = null // 提升到外部作用域
+  let isApiAccount = false // 提升到外部作用域
 
   try {
     if (!ensureGeminiPermission(req, res)) {
@@ -425,20 +508,54 @@ async function handleStandardStreamGenerateContent(req, res) {
     }
 
     // 使用统一调度选择账号
-    const { accountId } = await unifiedGeminiScheduler.selectAccountForApiKey(
+    const schedulerResult = await unifiedGeminiScheduler.selectAccountForApiKey(
       req.apiKey,
       sessionHash,
-      model
+      model,
+      { allowApiAccounts: true } // 允许调度 API 账户
     )
-    account = await geminiAccountService.getAccount(accountId)
-    const { accessToken, refreshToken } = account
+    ;({ accountId } = schedulerResult)
+    const { accountType } = schedulerResult
+
+    // 判断账户类型：根据 accountType 判断，而非 accountId 前缀
+    isApiAccount = accountType === 'gemini-api' // 赋值而不是声明
+    const actualAccountId = accountId // accountId 已经是实际 ID，无需处理前缀
 
     const version = req.path.includes('v1beta') ? 'v1beta' : 'v1'
-    logger.info(`Standard Gemini API streamGenerateContent request (${version})`, {
-      model,
-      projectId: account.projectId,
-      apiKeyId: req.apiKey?.id || 'unknown'
-    })
+
+    if (isApiAccount) {
+      // Gemini API 账户：使用 API Key 直接请求
+      account = await geminiApiAccountService.getAccount(actualAccountId)
+      if (!account) {
+        return res.status(404).json({
+          error: {
+            message: 'Gemini API account not found',
+            type: 'account_not_found'
+          }
+        })
+      }
+
+      logger.info(
+        `Standard Gemini API streamGenerateContent request (${version}) - API Key Account`,
+        {
+          model,
+          accountId: actualAccountId,
+          apiKeyId: req.apiKey?.id || 'unknown'
+        }
+      )
+    } else {
+      // OAuth 账户：使用原有流程
+      account = await geminiAccountService.getAccount(actualAccountId)
+
+      logger.info(
+        `Standard Gemini API streamGenerateContent request (${version}) - OAuth Account`,
+        {
+          model,
+          projectId: account.projectId,
+          apiKeyId: req.apiKey?.id || 'unknown'
+        }
+      )
+    }
 
     // 创建中止控制器
     abortController = new AbortController()
@@ -461,63 +578,108 @@ async function handleStandardStreamGenerateContent(req, res) {
       }
     }
 
-    const client = await geminiAccountService.getOauthClient(accessToken, refreshToken, proxyConfig)
+    let streamResponse
 
-    // 项目ID优先级：账户配置的项目ID > 临时项目ID > 尝试获取
-    let effectiveProjectId = account.projectId || account.tempProjectId || null
+    if (isApiAccount) {
+      // Gemini API 账户：直接使用 API Key 请求流式接口
+      // baseUrl 填写域名，版本固定为 v1beta
+      const apiUrl = `${account.baseUrl}/v1beta/models/${model}:streamGenerateContent?key=${account.apiKey}&alt=sse`
 
-    // 如果没有任何项目ID，尝试调用 loadCodeAssist 获取
-    if (!effectiveProjectId) {
-      try {
-        logger.info('📋 No projectId available, attempting to fetch from loadCodeAssist...')
-        const loadResponse = await geminiAccountService.loadCodeAssist(client, null, proxyConfig)
-
-        if (loadResponse.cloudaicompanionProject) {
-          effectiveProjectId = loadResponse.cloudaicompanionProject
-          // 保存临时项目ID
-          await geminiAccountService.updateTempProjectId(accountId, effectiveProjectId)
-          logger.info(`📋 Fetched and cached temporary projectId: ${effectiveProjectId}`)
-        }
-      } catch (loadError) {
-        logger.warn('Failed to fetch projectId from loadCodeAssist:', loadError.message)
+      // 构建 Axios 配置
+      const axiosConfig = {
+        method: 'POST',
+        url: apiUrl,
+        data: actualRequestData,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        responseType: 'stream',
+        signal: abortController.signal
       }
-    }
 
-    // 如果还是没有项目ID，返回错误
-    if (!effectiveProjectId) {
-      return res.status(403).json({
-        error: {
-          message:
-            'This account requires a project ID to be configured. Please configure a project ID in the account settings.',
-          type: 'configuration_required'
+      // 添加代理配置
+      if (proxyConfig) {
+        const proxyHelper = new ProxyHelper()
+        axiosConfig.httpsAgent = proxyHelper.createProxyAgent(proxyConfig)
+        axiosConfig.httpAgent = proxyHelper.createProxyAgent(proxyConfig)
+      }
+
+      try {
+        const apiResponse = await axios(axiosConfig)
+        streamResponse = apiResponse.data
+      } catch (error) {
+        logger.error('Gemini API stream request failed:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data
+        })
+        throw error
+      }
+    } else {
+      // OAuth 账户：使用原有流程
+      const { accessToken, refreshToken } = account
+      const client = await geminiAccountService.getOauthClient(
+        accessToken,
+        refreshToken,
+        proxyConfig
+      )
+
+      // 项目ID优先级：账户配置的项目ID > 临时项目ID > 尝试获取
+      let effectiveProjectId = account.projectId || account.tempProjectId || null
+
+      // 如果没有任何项目ID，尝试调用 loadCodeAssist 获取
+      if (!effectiveProjectId) {
+        try {
+          logger.info('📋 No projectId available, attempting to fetch from loadCodeAssist...')
+          const loadResponse = await geminiAccountService.loadCodeAssist(client, null, proxyConfig)
+
+          if (loadResponse.cloudaicompanionProject) {
+            effectiveProjectId = loadResponse.cloudaicompanionProject
+            // 保存临时项目ID
+            await geminiAccountService.updateTempProjectId(actualAccountId, effectiveProjectId)
+            logger.info(`📋 Fetched and cached temporary projectId: ${effectiveProjectId}`)
+          }
+        } catch (loadError) {
+          logger.warn('Failed to fetch projectId from loadCodeAssist:', loadError.message)
         }
+      }
+
+      // 如果还是没有项目ID，返回错误
+      if (!effectiveProjectId) {
+        return res.status(403).json({
+          error: {
+            message:
+              'This account requires a project ID to be configured. Please configure a project ID in the account settings.',
+            type: 'configuration_required'
+          }
+        })
+      }
+
+      logger.info('📋 Standard API 流式项目ID处理逻辑', {
+        accountProjectId: account.projectId,
+        tempProjectId: account.tempProjectId,
+        effectiveProjectId,
+        decision: account.projectId
+          ? '使用账户配置'
+          : account.tempProjectId
+            ? '使用临时项目ID'
+            : '从loadCodeAssist获取'
       })
+
+      // 生成一个符合 Gemini CLI 格式的 user_prompt_id
+      const userPromptId = `${require('crypto').randomUUID()}########0`
+
+      // 调用内部 API（cloudcode-pa）的流式接口
+      streamResponse = await geminiAccountService.generateContentStream(
+        client,
+        { model, request: actualRequestData },
+        userPromptId, // 使用生成的 user_prompt_id
+        effectiveProjectId, // 使用处理后的项目ID
+        req.apiKey?.id, // 使用 API Key ID 作为 session ID
+        abortController.signal,
+        proxyConfig
+      )
     }
-
-    logger.info('📋 Standard API 流式项目ID处理逻辑', {
-      accountProjectId: account.projectId,
-      tempProjectId: account.tempProjectId,
-      effectiveProjectId,
-      decision: account.projectId
-        ? '使用账户配置'
-        : account.tempProjectId
-          ? '使用临时项目ID'
-          : '从loadCodeAssist获取'
-    })
-
-    // 生成一个符合 Gemini CLI 格式的 user_prompt_id
-    const userPromptId = `${require('crypto').randomUUID()}########0`
-
-    // 调用内部 API（cloudcode-pa）的流式接口
-    const streamResponse = await geminiAccountService.generateContentStream(
-      client,
-      { model, request: actualRequestData },
-      userPromptId, // 使用生成的 user_prompt_id
-      effectiveProjectId, // 使用处理后的项目ID
-      req.apiKey?.id, // 使用 API Key ID 作为 session ID
-      abortController.signal,
-      proxyConfig
-    )
 
     // 设置 SSE 响应头
     res.setHeader('Content-Type', 'text/event-stream')
@@ -548,64 +710,94 @@ async function handleStandardStreamGenerateContent(req, res) {
 
     heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL)
 
+    // 缓冲区：有些 chunk 内会包含多条 SSE 事件，需要拆分
+    let sseBuffer = ''
+
+    // 处理单个 SSE 事件块（不含结尾空行）
+    const handleEventBlock = (evt) => {
+      if (!evt.trim()) {
+        return
+      }
+
+      // 取出所有 data 行并拼接（兼容多行 data）
+      const dataLines = evt.split(/\r?\n/).filter((line) => line.startsWith('data:'))
+      if (dataLines.length === 0) {
+        // 非 data 事件，直接原样转发
+        if (!res.destroyed) {
+          res.write(`${evt}\n\n`)
+        }
+        return
+      }
+
+      const dataPayload = dataLines.map((line) => line.replace(/^data:\s?/, '')).join('\n')
+
+      let processedPayload = null
+      let parsed = null
+
+      if (dataPayload === '[DONE]') {
+        processedPayload = '[DONE]'
+      } else {
+        try {
+          parsed = JSON.parse(dataPayload)
+
+          // 捕获 usage（如果在顶层或 response 内都有可能）
+          if (parsed.usageMetadata) {
+            totalUsage = parsed.usageMetadata
+          } else if (parsed.response?.usageMetadata) {
+            totalUsage = parsed.response.usageMetadata
+          }
+
+          // 提取 response 并重新包装
+          processedPayload = JSON.stringify(parsed.response || parsed)
+        } catch (e) {
+          // 解析失败，直接转发原始 data
+        }
+      }
+
+      const outputChunk = processedPayload === null ? `${evt}\n\n` : `data: ${processedPayload}\n\n`
+
+      // 1️⃣ 立即转发处理后的数据
+      if (!res.destroyed) {
+        res.write(outputChunk)
+      }
+
+      // 2️⃣ 异步提取 usage 数据（兜底，防止上面解析失败未捕获）
+      setImmediate(() => {
+        try {
+          const usageSource =
+            processedPayload && processedPayload !== '[DONE]' ? processedPayload : dataPayload
+
+          if (!usageSource || !usageSource.includes('usageMetadata')) {
+            return
+          }
+
+          // 再尝试一次解析
+          const usageObj = JSON.parse(usageSource)
+          const usage = usageObj.usageMetadata || usageObj.response?.usageMetadata || usageObj.usage
+
+          if (usage && typeof usage === 'object') {
+            totalUsage = usage
+            logger.debug('📊 Captured Gemini usage data (async):', totalUsage)
+          }
+        } catch (error) {
+          // 提取用量失败时忽略
+        }
+      })
+    }
+
     streamResponse.on('data', (chunk) => {
       try {
         // 更新最后数据时间
         lastDataTime = Date.now()
 
-        const chunkStr = chunk.toString()
+        // 追加到缓冲区后按双换行拆分事件
+        sseBuffer += chunk.toString()
+        const events = sseBuffer.split(/\r?\n\r?\n/)
+        sseBuffer = events.pop() || ''
 
-        // 尝试解析 SSE 数据
-        // upstream 返回格式: data: {"response": {...}}
-        // standard API 期望格式: data: {...}
-
-        let processedChunk = chunk
-
-        if (chunkStr.startsWith('data: ')) {
-          try {
-            const jsonStr = chunkStr.substring(6).trim()
-            if (jsonStr !== '[DONE]') {
-              const data = JSON.parse(jsonStr)
-              if (data.response) {
-                // 提取内部的 response 对象并重新包装为 SSE
-                const newPayload = JSON.stringify(data.response)
-                processedChunk = Buffer.from(`data: ${newPayload}\n\n`)
-              }
-            }
-          } catch (e) {
-            // 解析失败，直接转发原始数据
-            // logger.warn('Failed to parse SSE chunk:', e)
-          }
+        for (const evt of events) {
+          handleEventBlock(evt)
         }
-
-        // 1️⃣ 立即转发处理后的数据
-        if (!res.destroyed) {
-          res.write(processedChunk)
-        }
-
-        // 2️⃣ 异步提取 usage 数据（不阻塞转发）
-        setImmediate(() => {
-          try {
-            const str = processedChunk.toString()
-            if (!str.trim() || !str.includes('usageMetadata')) {
-              return
-            }
-
-            // 简单的解析尝试
-            const match = str.match(/"usageMetadata":\s*({[^}]+})/)
-            if (match && match[1]) {
-              try {
-                const usage = JSON.parse(match[1])
-                totalUsage = usage
-                logger.debug('📊 Captured Gemini usage data:', totalUsage)
-              } catch (e) {
-                // ignore
-              }
-            }
-          } catch (error) {
-            logger.warn('⚠️ Error extracting usage data:', error.message)
-          }
-        })
       } catch (error) {
         logger.error('Error processing stream chunk:', error)
       }
@@ -613,6 +805,16 @@ async function handleStandardStreamGenerateContent(req, res) {
 
     streamResponse.on('end', () => {
       logger.info('Stream completed successfully')
+
+      // 处理可能残留在缓冲区的事件（上游未以空行结尾的情况）
+      if (sseBuffer.trim()) {
+        try {
+          handleEventBlock(sseBuffer)
+        } catch (flushError) {
+          // 忽略 flush 期间的异常
+        }
+        sseBuffer = ''
+      }
 
       // 清理心跳定时器
       if (heartbeatTimer) {
@@ -633,7 +835,7 @@ async function handleStandardStreamGenerateContent(req, res) {
             0, // cacheCreateTokens
             0, // cacheReadTokens
             model,
-            account.id,
+            accountId, // 使用原始 accountId（含前缀）
             req.apiKey.useBooster || false // 传递是否使用加油包
           )
           .then(() => {
@@ -704,17 +906,22 @@ async function handleStandardStreamGenerateContent(req, res) {
       stack: error.stack
     })
 
-    // 处理速率限制
-    if (error.response?.status === 429) {
-      logger.warn(
-        `⚠️ Gemini account ${account.id} rate limited (Standard Stream API), marking as limited`
-      )
-      try {
-        await unifiedGeminiScheduler.markAccountRateLimited(account.id, 'gemini', sessionHash)
-      } catch (limitError) {
-        logger.warn('Failed to mark account as rate limited in scheduler:', limitError)
-      }
-    }
+    // 处理速率限制 暂时去掉此处的标记限流的处理
+    // if (error.response?.status === 429 && accountId) {
+    //   logger.warn(
+    //     `⚠️ Gemini account ${accountId} rate limited (Standard Stream API), marking as limited`
+    //   )
+    //   try {
+    //     const rateLimitAccountType = isApiAccount ? 'gemini-api' : 'gemini'
+    //     await unifiedGeminiScheduler.markAccountRateLimited(
+    //       accountId, // 账户 ID
+    //       rateLimitAccountType,
+    //       sessionHash
+    //     )
+    //   } catch (limitError) {
+    //     logger.warn('Failed to mark account as rate limited in scheduler:', limitError)
+    //   }
+    // }
 
     if (!res.headersSent) {
       const statusCode = normalizedError.status || 500
