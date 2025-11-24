@@ -7,7 +7,7 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : 0
 }
 
-async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
+async function updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBooster = false) {
   if (!rateLimitInfo) {
     return { totalTokens: 0, totalCost: 0 }
   }
@@ -24,7 +24,8 @@ async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
 
   const totalTokens = inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
 
-  if (totalTokens > 0 && rateLimitInfo.tokenCountKey) {
+  // 使用加油包时，不更新时间窗口的 token 计数
+  if (totalTokens > 0 && rateLimitInfo.tokenCountKey && !useBooster) {
     await client.incrby(rateLimitInfo.tokenCountKey, Math.round(totalTokens))
   }
 
@@ -59,8 +60,25 @@ async function updateRateLimitCounters(rateLimitInfo, usageSummary, model) {
     }
   }
 
-  if (totalCost > 0 && rateLimitInfo.costCountKey) {
+  // 使用加油包时，不更新时间窗口的成本计数
+  if (totalCost > 0 && rateLimitInfo.costCountKey && !useBooster) {
     await client.incrbyfloat(rateLimitInfo.costCountKey, totalCost)
+
+    // 同时激活周限窗口（确保逻辑一致性）
+    // 从 costCountKey 提取 keyId: rate_limit:cost:{keyId}
+    const keyId = rateLimitInfo.costCountKey.split(':')[2]
+    if (keyId) {
+      const weeklyWindowKey = `usage:cost:weekly:window_start:${keyId}`
+      const exists = await client.exists(weeklyWindowKey)
+
+      if (!exists) {
+        // 首次使用，创建周限窗口
+        const now = Date.now()
+        const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天
+        await client.set(weeklyWindowKey, now, 'PX', windowDuration)
+        await client.set(`usage:cost:weekly:total:${keyId}`, 0, 'PX', windowDuration)
+      }
+    }
   }
 
   return { totalTokens, totalCost }

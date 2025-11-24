@@ -379,7 +379,8 @@ async function handleStandardGenerateContent(req, res) {
           0, // cacheCreateTokens
           0, // cacheReadTokens
           model,
-          accountId // 账户 ID
+          accountId, // 账户 ID
+          req.apiKey.useBooster || false // 传递是否使用加油包
         )
         logger.info(
           `📊 Recorded Gemini usage - Input: ${usage.promptTokenCount}, Output: ${usage.candidatesTokenCount}, Total: ${usage.totalTokenCount}`
@@ -834,7 +835,8 @@ async function handleStandardStreamGenerateContent(req, res) {
             0, // cacheCreateTokens
             0, // cacheReadTokens
             model,
-            accountId // 使用原始 accountId（含前缀）
+            accountId, // 使用原始 accountId（含前缀）
+            req.apiKey.useBooster || false // 传递是否使用加油包
           )
           .then(() => {
             logger.info(

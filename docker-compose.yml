@@ -1,17 +1,12 @@
-version: '3.8'
-
-# Claude Relay Service Docker Compose 配置
-# 所有配置通过环境变量设置，无需映射 .env 文件
-
 services:
   # 🚀 Claude Relay Service
   claude-relay:
     build: .
-    image: weishaw/claude-relay-service:latest
+    image: heishui/claude-relay-service:latest
     restart: unless-stopped
-    ports:
+    # ports:
       # 绑定地址：生产环境建议使用反向代理，设置 BIND_HOST=127.0.0.1
-      - "${BIND_HOST:-0.0.0.0}:${PORT:-3000}:3000"
+      # - "${BIND_HOST:-127.0.0.1}:${PORT:-3000}:3000"
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -84,6 +79,52 @@ services:
       timeout: 10s
       retries: 3
 
+  cc-club-customer:
+    image: heishui/cc-club-customer:latest
+    ports:
+      - "13001:3000"
+    environment:
+      - NODE_ENV=production
+      - EMAIL_FROM=xiluo1990@gmail.com
+      - EMAIL_SERVER_HOST=smtp.gmail.com
+      - EMAIL_SERVER_PORT=587
+      - EMAIL_SERVER_USER=xiluo1990@gmail.com
+      - EMAIL_SERVER_PASSWORD=pqwsynxgtuoiifum
+      - RATE_LIMIT_MAX=${RATE_LIMIT_MAX:-100}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-900000}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/relay_user_service
+      - NEXTAUTH_SECRET=NeDH9muCkeJFD38qXqLJuW+V0PuXhXCZneXXBnASu1c=
+      - NEXTAUTH_URL=https://customer.claude-code.club
+      # - LOG_LEVEL=${LOG_LEVEL:-info}
+      # - SECURITY_CORS_ORIGINS=${SECURITY_CORS_ORIGINS}
+      - GITHUB_ID=Ov23livRvbXdjGqOUXOq
+      - GITHUB_SECRET=b9f91c190ea02db8445c30dbc0454437f7792b67
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USER=xiluo1990@gmail.com
+      - SMTP_PASS=pqwsynxgtuoiifum
+      - SMTP_FROM=xiluo1990@gmail.com
+      - REQUIRE_EMAIL_VERIFICATION=${REQUIRE_EMAIL_VERIFICATION}
+      - RELAY_SERVICE_BASE_URL=http://claude-relay:3000
+      - RELAY_SERVICE_USERNAME=${ADMIN_USERNAME}
+      - RELAY_SERVICE_PASSWORD=${ADMIN_PASSWORD}
+      - NEXTJS_ADMIN_EMAILS=${NEXTJS_ADMIN_EMAILS}
+      - REDIS_URL=redis://${REDIS_HOST}:${REDIS_PORT}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - claude-relay-network
+    volumes:
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # 📊 Redis Database
   redis:
     image: redis:7-alpine
@@ -105,65 +146,69 @@ services:
       timeout: 10s
       retries: 3
 
-  # 📈 Redis Monitoring (Optional)
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${REDIS_WEB_PORT:-8081}:8081"
+  postgres:
+    image: postgres:17-alpine
     environment:
-      - REDIS_HOSTS=local:redis:6379
-    depends_on:
-      - redis
+      - POSTGRES_DB=relay_user_service
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--data-checksums
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+      - ./backups:/backups
+    restart: unless-stopped
     networks:
       - claude-relay-network
-    profiles:
-      - monitoring
-
-  # 📊 Application Monitoring (Optional)
-  prometheus:
-    image: prom/prometheus:latest
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cc -d relay_user_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - claude-relay-network
-    profiles:
-      - monitoring
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=100
+      - -c
+      - log_statement=mod
 
-  # 📈 Grafana Dashboard (Optional)
-  grafana:
-    image: grafana/grafana:latest
+  # 🔒 Caddy Server
+  caddy:
+    image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      - "80:80"
+      - "3000:443"
+      - "3000:443/udp"
     volumes:
-      - grafana_data:/var/lib/grafana
-      - ./config/grafana:/etc/grafana/provisioning
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    environment:
+      - CADDY_DOMAIN=${CADDY_DOMAIN}
+      - CADDY_EMAIL=${CADDY_EMAIL}
+      - CUSTOMER_DOMAIN=${CUSTOMER_DOMAIN}
+    # command: caddy reverse-proxy --from ${CADDY_DOMAIN} --to claude-relay:3000
     depends_on:
-      - prometheus
+      - claude-relay
     networks:
       - claude-relay-network
-    profiles:
-      - monitoring
-
-volumes:
-  prometheus_data:
-    driver: local
-  grafana_data:
-    driver: local
 
 networks:
   claude-relay-network:
     driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

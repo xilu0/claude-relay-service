@@ -6,6 +6,7 @@ const ccrRelayService = require('../services/ccrRelayService')
 const bedrockAccountService = require('../services/bedrockAccountService')
 const unifiedClaudeScheduler = require('../services/unifiedClaudeScheduler')
 const apiKeyService = require('../services/apiKeyService')
+const redis = require('../models/redis')
 const { authenticateApiKey } = require('../middleware/auth')
 const logger = require('../utils/logger')
 const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelHelper')
@@ -14,14 +15,20 @@ const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
 const router = express.Router()
 
-function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
+function queueRateLimitUpdate(
+  rateLimitInfo,
+  usageSummary,
+  model,
+  context = '',
+  useBooster = false
+) {
   if (!rateLimitInfo) {
     return Promise.resolve({ totalTokens: 0, totalCost: 0 })
   }
 
   const label = context ? ` (${context})` : ''
 
-  return updateRateLimitCounters(rateLimitInfo, usageSummary, model)
+  return updateRateLimitCounters(rateLimitInfo, usageSummary, model, useBooster)
     .then(({ totalTokens, totalCost }) => {
       if (totalTokens > 0) {
         logger.api(`📊 Updated rate limit token count${label}: +${totalTokens} tokens`)
@@ -227,7 +234,14 @@ async function handleMessagesRequest(req, res) {
               }
 
               apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'claude')
+                .recordUsageWithDetails(
+                  req.apiKey.id,
+                  usageObject,
+                  model,
+                  usageAccountId,
+                  'claude',
+                  req.apiKey.useBooster
+                )
                 .catch((error) => {
                   logger.error('❌ Failed to record stream usage:', error)
                 })
@@ -241,7 +255,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'claude-stream'
+                'claude-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -317,7 +332,8 @@ async function handleMessagesRequest(req, res) {
                   usageObject,
                   model,
                   usageAccountId,
-                  'claude-console'
+                  'claude-console',
+                  req.apiKey.useBooster
                 )
                 .catch((error) => {
                   logger.error('❌ Failed to record stream usage:', error)
@@ -332,7 +348,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'claude-console-stream'
+                'claude-console-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -368,7 +385,16 @@ async function handleMessagesRequest(req, res) {
             const outputTokens = result.usage.output_tokens || 0
 
             apiKeyService
-              .recordUsage(req.apiKey.id, inputTokens, outputTokens, 0, 0, result.model, accountId)
+              .recordUsage(
+                req.apiKey.id,
+                inputTokens,
+                outputTokens,
+                0,
+                0,
+                result.model,
+                accountId,
+                req.apiKey.useBooster
+              )
               .catch((error) => {
                 logger.error('❌ Failed to record Bedrock stream usage:', error)
               })
@@ -382,7 +408,8 @@ async function handleMessagesRequest(req, res) {
                 cacheReadTokens: 0
               },
               result.model,
-              'bedrock-stream'
+              'bedrock-stream',
+              req.apiKey.useBooster
             )
 
             usageDataCaptured = true
@@ -453,7 +480,14 @@ async function handleMessagesRequest(req, res) {
               }
 
               apiKeyService
-                .recordUsageWithDetails(req.apiKey.id, usageObject, model, usageAccountId, 'ccr')
+                .recordUsageWithDetails(
+                  req.apiKey.id,
+                  usageObject,
+                  model,
+                  usageAccountId,
+                  'ccr',
+                  req.apiKey.useBooster
+                )
                 .catch((error) => {
                   logger.error('❌ Failed to record CCR stream usage:', error)
                 })
@@ -467,7 +501,8 @@ async function handleMessagesRequest(req, res) {
                   cacheReadTokens
                 },
                 model,
-                'ccr-stream'
+                'ccr-stream',
+                req.apiKey.useBooster
               )
 
               usageDataCaptured = true
@@ -653,7 +688,8 @@ async function handleMessagesRequest(req, res) {
             cacheCreateTokens,
             cacheReadTokens,
             model,
-            responseAccountId
+            responseAccountId,
+            req.apiKey.useBooster || false // 传递是否使用加油包
           )
 
           await queueRateLimitUpdate(
@@ -665,7 +701,8 @@ async function handleMessagesRequest(req, res) {
               cacheReadTokens
             },
             model,
-            'claude-non-stream'
+            'claude-non-stream',
+            req.apiKey.useBooster
           )
 
           usageRecorded = true
@@ -867,12 +904,34 @@ router.get('/v1/key-info', authenticateApiKey, async (req, res) => {
   try {
     const usage = await apiKeyService.getUsageStats(req.apiKey.id)
 
+    // 获取周限制重置时间
+    const weeklyResetTime = await redis.getWeeklyCostResetTime(req.apiKey.id)
+
+    // 获取加油包使用情况
+    const boosterPackUsed = await redis.getBoosterPackUsed(req.apiKey.id)
+
+    // 获取周限制激活状态
+    const isWeeklyCostActive = await redis.isWeeklyCostActive(req.apiKey.id)
+
+    const weeklyCostLimit = req.apiKey.weeklyCostLimit || 0
+    const weeklyCost = req.apiKey.weeklyCost || 0
+
     res.json({
       keyInfo: {
         id: req.apiKey.id,
         name: req.apiKey.name,
         tokenLimit: req.apiKey.tokenLimit,
-        usage
+        usage,
+        // 周限制信息
+        weeklyCostLimit,
+        weeklyCost,
+        weeklyResetTime: weeklyResetTime.toISOString(),
+        isWeeklyCostActive: isWeeklyCostActive || false,
+        weeklyRemaining: Math.max(0, weeklyCostLimit - weeklyCost),
+        weeklyUsagePercentage: weeklyCostLimit > 0 ? (weeklyCost / weeklyCostLimit) * 100 : 0,
+        // 加油包信息
+        boosterPackAmount: req.apiKey.boosterPackAmount || 0,
+        boosterPackUsed
       },
       timestamp: new Date().toISOString()
     })

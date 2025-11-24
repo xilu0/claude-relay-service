@@ -328,9 +328,14 @@
                       <i v-else class="fas fa-sort ml-1 text-gray-400" />
                     </th>
                     <th
-                      class="w-[14%] min-w-[120px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                      class="w-[18%] min-w-[160px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
                     >
                       限制
+                    </th>
+                    <th
+                      class="w-[10%] min-w-[90px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                    >
+                      🚀 加油包
                     </th>
                     <th
                       class="w-[5%] min-w-[45px] cursor-pointer px-3 py-4 text-right text-xs font-bold uppercase tracking-wider text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-600"
@@ -408,7 +413,7 @@
                       <i v-else class="fas fa-sort ml-1 text-gray-400" />
                     </th>
                     <th
-                      class="operations-column sticky right-0 w-[23%] min-w-[200px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                      class="operations-column sticky right-0 w-[19%] min-w-[200px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
                     >
                       操作
                     </th>
@@ -597,9 +602,19 @@
                             variant="compact"
                           />
 
-                          <!-- 总费用限制进度条（无每日限制时展示） -->
+                          <!-- 周费用限制进度条（滚动7天窗口） -->
                           <LimitProgressBar
-                            v-else-if="key.totalCostLimit > 0"
+                            v-if="key.weeklyCostLimit > 0"
+                            :current="key.weeklyCost || 0"
+                            label="周限制(7天)"
+                            :limit="key.weeklyCostLimit"
+                            type="weekly"
+                            variant="compact"
+                          />
+
+                          <!-- 总费用限制进度条 -->
+                          <LimitProgressBar
+                            v-if="key.totalCostLimit > 0"
                             :current="key.usage?.total?.cost || 0"
                             label="总费用限制"
                             :limit="key.totalCostLimit"
@@ -607,14 +622,9 @@
                             variant="compact"
                           />
 
-                          <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
+                          <!-- 时间窗口费用限制 -->
                           <div
-                            v-else-if="
-                              key.rateLimitWindow > 0 &&
-                              key.rateLimitCost > 0 &&
-                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                              (!key.totalCostLimit || key.totalCostLimit === 0)
-                            "
+                            v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0"
                             class="space-y-1.5"
                           >
                             <!-- 费用进度条 -->
@@ -646,17 +656,71 @@
                                 }}
                               </span>
                             </div>
+
+                            <!-- 周限截止时间（如果设置了周限制） -->
+                            <div
+                              v-if="key.weeklyCostLimit > 0"
+                              class="mt-1 flex items-center justify-between text-[10px]"
+                            >
+                              <div
+                                class="flex items-center gap-1 text-violet-600 dark:text-violet-300"
+                              >
+                                <i class="fas fa-calendar-week text-[10px]" />
+                                <span class="font-medium">周限截止</span>
+                              </div>
+                              <span class="font-bold text-violet-700 dark:text-violet-300">
+                                {{
+                                  formatWeeklyResetTime(key.weeklyResetTime, key.isWeeklyCostActive)
+                                }}
+                              </span>
+                            </div>
                           </div>
 
                           <!-- 如果没有任何限制 -->
                           <div
-                            v-else
+                            v-if="
+                              (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                              (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                              (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                              (!key.rateLimitWindow ||
+                                key.rateLimitWindow === 0 ||
+                                !key.rateLimitCost ||
+                                key.rateLimitCost === 0)
+                            "
                             class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                           >
                             <i class="fas fa-infinity text-base" />
                             <span class="text-xs font-medium">无限制</span>
                           </div>
                         </div>
+                      </td>
+                      <!-- 🚀 加油包 -->
+                      <td class="px-3 py-2">
+                        <div
+                          v-if="key.boosterPackAmount && key.boosterPackAmount > 0"
+                          class="text-sm"
+                        >
+                          <div class="font-medium text-gray-900 dark:text-white">
+                            ${{ (key.boosterPackUsed || 0).toFixed(2) }} / ${{
+                              key.boosterPackAmount.toFixed(2)
+                            }}
+                          </div>
+                          <div
+                            class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"
+                          >
+                            <div
+                              class="h-full rounded-full bg-gradient-to-r from-yellow-400 to-orange-500 transition-all duration-300"
+                              :style="{
+                                width:
+                                  Math.min(
+                                    100,
+                                    ((key.boosterPackUsed || 0) / key.boosterPackAmount) * 100
+                                  ) + '%'
+                              }"
+                            ></div>
+                          </div>
+                        </div>
+                        <span v-else class="text-sm text-gray-400 dark:text-gray-500">未设置</span>
                       </td>
                       <!-- Token数量 -->
                       <td class="whitespace-nowrap px-3 py-3 text-right" style="font-size: 13px">
@@ -811,6 +875,32 @@
                           >
                             <i class="fas fa-edit" />
                             <span class="ml-1 hidden xl:inline">编辑</span>
+                          </button>
+                          <button
+                            v-if="key.boosterPackAmount && key.boosterPackAmount > 0"
+                            class="rounded px-2 py-1 text-xs font-medium text-orange-600 transition-colors hover:bg-orange-50 hover:text-orange-900 dark:hover:bg-orange-900/20"
+                            title="查看加油包使用"
+                            @click="openBoosterPackUsage(key)"
+                          >
+                            <i class="fas fa-chart-line" />
+                            <span class="ml-1 hidden xl:inline">加油包使用</span>
+                          </button>
+                          <button
+                            class="rounded px-2 py-1 text-xs font-medium text-yellow-600 transition-colors hover:bg-yellow-50 hover:text-yellow-900 dark:hover:bg-yellow-900/20"
+                            title="充值加油包"
+                            @click="openBoosterPackRecharge(key)"
+                          >
+                            <i class="fas fa-bolt" />
+                            <span class="ml-1 hidden xl:inline">充值加油包</span>
+                          </button>
+                          <button
+                            v-if="key.weeklyCostLimit && key.weeklyCostLimit > 0"
+                            class="rounded px-2 py-1 text-xs font-medium text-violet-600 transition-colors hover:bg-violet-50 hover:text-violet-900 dark:hover:bg-violet-900/20"
+                            title="重置周限"
+                            @click="handleResetWeeklyCost(key)"
+                          >
+                            <i class="fas fa-redo" />
+                            <span class="ml-1 hidden xl:inline">重置周限</span>
                           </button>
                           <button
                             v-if="
@@ -1316,9 +1406,19 @@
                     variant="compact"
                   />
 
-                  <!-- 总费用限制（无每日限制时展示） -->
+                  <!-- 周费用限制进度条（滚动7天窗口） -->
                   <LimitProgressBar
-                    v-else-if="key.totalCostLimit > 0"
+                    v-if="key.weeklyCostLimit > 0"
+                    :current="key.weeklyCost || 0"
+                    label="周限制(7天)"
+                    :limit="key.weeklyCostLimit"
+                    type="weekly"
+                    variant="compact"
+                  />
+
+                  <!-- 总费用限制 -->
+                  <LimitProgressBar
+                    v-if="key.totalCostLimit > 0"
                     :current="key.usage?.total?.cost || 0"
                     label="总费用限制"
                     :limit="key.totalCostLimit"
@@ -1326,16 +1426,8 @@
                     variant="compact"
                   />
 
-                  <!-- 时间窗口费用限制（无每日和总费用限制时展示） -->
-                  <div
-                    v-else-if="
-                      key.rateLimitWindow > 0 &&
-                      key.rateLimitCost > 0 &&
-                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
-                      (!key.totalCostLimit || key.totalCostLimit === 0)
-                    "
-                    class="space-y-2"
-                  >
+                  <!-- 时间窗口费用限制 -->
+                  <div v-if="key.rateLimitWindow > 0 && key.rateLimitCost > 0" class="space-y-2">
                     <!-- 费用进度条 -->
                     <LimitProgressBar
                       :current="key.currentWindowCost || 0"
@@ -1365,11 +1457,33 @@
                         }}
                       </span>
                     </div>
+
+                    <!-- 周限截止时间（如果设置了周限制） -->
+                    <div
+                      v-if="key.weeklyCostLimit > 0"
+                      class="mt-2 flex items-center justify-between text-xs"
+                    >
+                      <div class="flex items-center gap-1.5 text-violet-600 dark:text-violet-300">
+                        <i class="fas fa-calendar-week text-xs" />
+                        <span class="font-medium">周限截止</span>
+                      </div>
+                      <span class="font-bold text-violet-700 dark:text-violet-300">
+                        {{ formatWeeklyResetTime(key.weeklyResetTime, key.isWeeklyCostActive) }}
+                      </span>
+                    </div>
                   </div>
 
                   <!-- 无限制显示 -->
                   <div
-                    v-else
+                    v-if="
+                      (!key.dailyCostLimit || key.dailyCostLimit === 0) &&
+                      (!key.weeklyCostLimit || key.weeklyCostLimit === 0) &&
+                      (!key.totalCostLimit || key.totalCostLimit === 0) &&
+                      (!key.rateLimitWindow ||
+                        key.rateLimitWindow === 0 ||
+                        !key.rateLimitCost ||
+                        key.rateLimitCost === 0)
+                    "
                     class="flex items-center justify-center gap-1.5 py-2 text-gray-500 dark:text-gray-400"
                   >
                     <i class="fas fa-infinity text-base" />
@@ -1479,7 +1593,7 @@
           >
             <div class="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
               <span class="text-xs text-gray-600 dark:text-gray-400 sm:text-sm">
-                共 {{ sortedApiKeys.length }} 条记录
+                共 {{ apiKeysStore.pagination.total || 0 }} 条记录
               </span>
               <div class="flex items-center gap-2">
                 <span class="text-xs text-gray-600 dark:text-gray-400 sm:text-sm">每页显示</span>
@@ -1921,6 +2035,21 @@
       :show="showUsageDetailModal"
       @close="showUsageDetailModal = false"
     />
+
+    <!-- 🚀 加油包使用详情弹窗 -->
+    <BoosterPackUsageModal
+      :api-key="selectedBoosterPackApiKey"
+      :is-open="showBoosterPackUsageModal"
+      @close="showBoosterPackUsageModal = false"
+    />
+
+    <!-- 🚀 加油包充值弹窗 -->
+    <BoosterPackRechargeModal
+      :api-key="selectedBoosterPackApiKey"
+      :is-open="showBoosterPackRechargeModal"
+      @close="showBoosterPackRechargeModal = false"
+      @success="handleBoosterPackRechargeSuccess"
+    />
   </div>
 </template>
 
@@ -1930,6 +2059,7 @@ import { showToast } from '@/utils/toast'
 import { apiClient } from '@/config/api'
 import { useClientsStore } from '@/stores/clients'
 import { useAuthStore } from '@/stores/auth'
+import { useApiKeysStore } from '@/stores/apiKeys' // 🚀 新增
 import * as XLSX from 'xlsx-js-style'
 import CreateApiKeyModal from '@/components/apikeys/CreateApiKeyModal.vue'
 import EditApiKeyModal from '@/components/apikeys/EditApiKeyModal.vue'
@@ -1940,11 +2070,14 @@ import BatchEditApiKeyModal from '@/components/apikeys/BatchEditApiKeyModal.vue'
 import ExpiryEditModal from '@/components/apikeys/ExpiryEditModal.vue'
 import UsageDetailModal from '@/components/apikeys/UsageDetailModal.vue'
 import LimitProgressBar from '@/components/apikeys/LimitProgressBar.vue'
+import BoosterPackUsageModal from '@/components/apikeys/BoosterPackUsageModal.vue'
+import BoosterPackRechargeModal from '@/components/apikeys/BoosterPackRechargeModal.vue'
 import CustomDropdown from '@/components/common/CustomDropdown.vue'
 
 // 响应式数据
 const clientsStore = useClientsStore()
 const authStore = useAuthStore()
+const apiKeysStore = useApiKeysStore() // 🚀 新增 store
 const apiKeys = ref([])
 
 // 获取 LDAP 启用状态
@@ -2045,22 +2178,41 @@ const selectedTagCount = computed(() => {
     .length
 })
 
-// 分页相关
-const currentPage = ref(1)
-// 从 localStorage 读取保存的每页显示条数，默认为 10
-const getInitialPageSize = () => {
+// 🚀 分页相关（使用服务端分页）
+const pageSizeOptions = [10, 20, 50, 100]
+// 从 localStorage 读取保存的每页显示条数并初始化 store
+const initializePageSize = () => {
   const saved = localStorage.getItem('apiKeysPageSize')
   if (saved) {
     const parsedSize = parseInt(saved, 10)
-    // 验证保存的值是否在允许的选项中
     if ([10, 20, 50, 100].includes(parsedSize)) {
-      return parsedSize
+      apiKeysStore.pagination.pageSize = parsedSize
     }
   }
-  return 10
 }
-const pageSize = ref(getInitialPageSize())
-const pageSizeOptions = [10, 20, 50, 100]
+// 初始化
+initializePageSize()
+
+// 🚀 创建计算属性作为代理，方便模板使用
+const currentPage = computed({
+  get: () => apiKeysStore.pagination.page,
+  set: (val) => {
+    apiKeysStore.pagination.page = val
+    // 服务端分页：重新加载数据
+    loadApiKeys()
+  }
+})
+
+const pageSize = computed({
+  get: () => apiKeysStore.pagination.pageSize,
+  set: (val) => {
+    apiKeysStore.pagination.pageSize = val
+    apiKeysStore.pagination.page = 1 // 重置到第一页
+    localStorage.setItem('apiKeysPageSize', val.toString())
+    // 服务端分页：重新加载数据
+    loadApiKeys()
+  }
+})
 
 // 模态框状态
 const showCreateApiKeyModal = ref(false)
@@ -2070,158 +2222,31 @@ const showNewApiKeyModal = ref(false)
 const showBatchApiKeyModal = ref(false)
 const showBatchEditModal = ref(false)
 const editingApiKey = ref(null)
+// 🚀 加油包模态框
+const showBoosterPackUsageModal = ref(false)
+const showBoosterPackRechargeModal = ref(false)
+const selectedBoosterPackApiKey = ref(null)
 const renewingApiKey = ref(null)
 const newApiKeyData = ref(null)
 const batchApiKeyData = ref([])
 
-// 提取“所属账号”列直接展示的文本
-const getBindingDisplayStrings = (key) => {
-  const values = new Set()
-
-  const collect = (...items) => {
-    items.forEach((item) => {
-      if (typeof item !== 'string') return
-      const trimmed = item.trim()
-      if (trimmed) {
-        values.add(trimmed)
-      }
-    })
-  }
-
-  const sanitize = (text) => {
-    if (typeof text !== 'string') return ''
-    return text
-      .replace(/^⚠️\s*/, '')
-      .replace(/^🔒\s*/, '')
-      .trim()
-  }
-
-  const appendBindingRow = (label, info) => {
-    const infoSanitized = sanitize(info)
-    collect(label, info, infoSanitized)
-    if (infoSanitized) {
-      collect(`${label} ${infoSanitized}`)
-    }
-  }
-
-  if (key.claudeAccountId || key.claudeConsoleAccountId) {
-    appendBindingRow('Claude', getClaudeBindingInfo(key))
-  }
-
-  if (key.geminiAccountId) {
-    appendBindingRow('Gemini', getGeminiBindingInfo(key))
-  }
-
-  if (key.openaiAccountId) {
-    appendBindingRow('OpenAI', getOpenAIBindingInfo(key))
-  }
-
-  if (key.bedrockAccountId) {
-    appendBindingRow('Bedrock', getBedrockBindingInfo(key))
-  }
-
-  if (key.droidAccountId) {
-    appendBindingRow('Droid', getDroidBindingInfo(key))
-  }
-
-  if (
-    !key.claudeAccountId &&
-    !key.claudeConsoleAccountId &&
-    !key.geminiAccountId &&
-    !key.openaiAccountId &&
-    !key.bedrockAccountId &&
-    !key.droidAccountId
-  ) {
-    collect('共享池')
-  }
-
-  return Array.from(values)
-}
-
 // 计算排序后的API Keys
 const sortedApiKeys = computed(() => {
-  // 先进行标签筛选
-  let filteredKeys = apiKeys.value
-  if (selectedTagFilter.value) {
-    filteredKeys = apiKeys.value.filter(
-      (key) => key.tags && key.tags.includes(selectedTagFilter.value)
-    )
-  }
-
-  // 然后进行搜索过滤
-  if (searchKeyword.value) {
-    const keyword = searchKeyword.value.toLowerCase().trim()
-    filteredKeys = filteredKeys.filter((key) => {
-      if (searchMode.value === 'bindingAccount') {
-        const bindings = getBindingDisplayStrings(key)
-        if (bindings.length === 0) return false
-        return bindings.some((text) => text.toLowerCase().includes(keyword))
-      }
-
-      const nameMatch = key.name && key.name.toLowerCase().includes(keyword)
-      if (isLdapEnabled.value) {
-        const ownerMatch =
-          key.ownerDisplayName && key.ownerDisplayName.toLowerCase().includes(keyword)
-        return nameMatch || ownerMatch
-      }
-      return nameMatch
-    })
-  }
-
-  // 如果没有排序字段，返回筛选后的结果
-  if (!apiKeysSortBy.value) return filteredKeys
-
-  // 排序
-  const sorted = [...filteredKeys].sort((a, b) => {
-    let aVal = a[apiKeysSortBy.value]
-    let bVal = b[apiKeysSortBy.value]
-
-    // 处理特殊排序字段
-    if (apiKeysSortBy.value === 'status') {
-      aVal = a.isActive ? 1 : 0
-      bVal = b.isActive ? 1 : 0
-    } else if (apiKeysSortBy.value === 'periodRequests') {
-      aVal = getPeriodRequests(a)
-      bVal = getPeriodRequests(b)
-    } else if (apiKeysSortBy.value === 'periodCost') {
-      aVal = calculatePeriodCost(a)
-      bVal = calculatePeriodCost(b)
-    } else if (apiKeysSortBy.value === 'periodTokens') {
-      aVal = getPeriodTokens(a)
-      bVal = getPeriodTokens(b)
-    } else if (apiKeysSortBy.value === 'dailyCost') {
-      aVal = a.dailyCost || 0
-      bVal = b.dailyCost || 0
-    } else if (apiKeysSortBy.value === 'totalCost') {
-      aVal = a.totalCost || 0
-      bVal = b.totalCost || 0
-    } else if (
-      apiKeysSortBy.value === 'createdAt' ||
-      apiKeysSortBy.value === 'expiresAt' ||
-      apiKeysSortBy.value === 'lastUsedAt'
-    ) {
-      aVal = aVal ? new Date(aVal).getTime() : 0
-      bVal = bVal ? new Date(bVal).getTime() : 0
-    }
-
-    if (aVal < bVal) return apiKeysSortOrder.value === 'asc' ? -1 : 1
-    if (aVal > bVal) return apiKeysSortOrder.value === 'asc' ? 1 : -1
-    return 0
-  })
-
-  return sorted
+  // 🚀 使用服务端分页模式：直接返回从服务器获取的数据
+  // 服务端已经处理了筛选、排序和分页，前端不需要再次处理
+  return apiKeys.value
 })
 
 // 计算总页数
 const totalPages = computed(() => {
-  const total = sortedApiKeys.value.length
-  return Math.ceil(total / pageSize.value) || 0
+  // 🚀 始终使用服务端分页
+  return apiKeysStore.pagination.totalPages || 0
 })
 
 // 计算显示的页码数组
 const pageNumbers = computed(() => {
   const pages = []
-  const current = currentPage.value
+  const current = apiKeysStore.pagination.page
   const total = totalPages.value
 
   if (total <= 7) {
@@ -2273,11 +2298,11 @@ const showTrailingEllipsis = computed(() => {
   return shouldShowLastPage.value && pages[pages.length - 1] < totalPages.value - 1
 })
 
-// 获取分页后的数据
+// 🚀 获取分页后的数据
 const paginatedApiKeys = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return sortedApiKeys.value.slice(start, end)
+  // 🚀 使用服务端分页模式：直接返回从服务器获取的当前页数据
+  // 服务端已经处理了筛选、排序和分页，前端不需要再次处理
+  return apiKeys.value
 })
 
 // 加载账户列表
@@ -2401,35 +2426,46 @@ const loadAccounts = async () => {
 const loadApiKeys = async () => {
   apiKeysLoading.value = true
   try {
-    // 构建请求参数
-    let params = {}
+    // 🚀 始终使用服务端分页模式
+    let timeRangeParam = 'all'
+    let startDateParam = undefined
+    let endDateParam = undefined
+
+    // 根据 globalDateFilter 设置 timeRange 参数
     if (
       globalDateFilter.type === 'custom' &&
       globalDateFilter.customStart &&
       globalDateFilter.customEnd
     ) {
-      params.startDate = globalDateFilter.customStart
-      params.endDate = globalDateFilter.customEnd
-      params.timeRange = 'custom'
-    } else if (globalDateFilter.preset === 'all') {
-      params.timeRange = 'all'
+      timeRangeParam = 'custom'
+      startDateParam = globalDateFilter.customStart
+      endDateParam = globalDateFilter.customEnd
     } else {
-      params.timeRange = globalDateFilter.preset
+      timeRangeParam = globalDateFilter.preset || 'all'
     }
 
-    const queryString = new URLSearchParams(params).toString()
-    const data = await apiClient.get(`/admin/api-keys?${queryString}`)
-    if (data.success) {
-      apiKeys.value = data.data || []
-      // 更新可用标签列表
-      const tagsSet = new Set()
-      apiKeys.value.forEach((key) => {
-        if (key.tags && Array.isArray(key.tags)) {
-          key.tags.forEach((tag) => tagsSet.add(tag))
-        }
-      })
-      availableTags.value = Array.from(tagsSet).sort()
-    }
+    await apiKeysStore.fetchApiKeys({
+      page: apiKeysStore.pagination.page,
+      pageSize: apiKeysStore.pagination.pageSize,
+      sortBy: apiKeysSortBy.value || 'createdAt',
+      sortOrder: apiKeysSortOrder.value || 'desc',
+      search: searchKeyword.value || '',
+      status: 'all',
+      permissions: 'all',
+      timeRange: timeRangeParam,
+      startDate: startDateParam,
+      endDate: endDateParam
+    })
+    apiKeys.value = apiKeysStore.apiKeys
+
+    // 更新可用标签列表
+    const tagsSet = new Set()
+    apiKeys.value.forEach((key) => {
+      if (key.tags && Array.isArray(key.tags)) {
+        key.tags.forEach((tag) => tagsSet.add(tag))
+      }
+    })
+    availableTags.value = Array.from(tagsSet).sort()
   } catch (error) {
     showToast('加载 API Keys 失败', 'error')
   } finally {
@@ -3346,6 +3382,52 @@ const handleRenewSuccess = () => {
   loadApiKeys()
 }
 
+// 🚀 打开加油包使用详情
+const openBoosterPackUsage = (key) => {
+  selectedBoosterPackApiKey.value = key
+  showBoosterPackUsageModal.value = true
+}
+
+// 🚀 打开加油包充值
+const openBoosterPackRecharge = (key) => {
+  selectedBoosterPackApiKey.value = key
+  showBoosterPackRechargeModal.value = true
+}
+
+// 🚀 处理加油包充值成功
+const handleBoosterPackRechargeSuccess = () => {
+  showBoosterPackRechargeModal.value = false
+  loadApiKeys()
+}
+
+// 💰 重置周限制使用记录
+const handleResetWeeklyCost = async (key) => {
+  let confirmed = true
+
+  if (window.showConfirm) {
+    confirmed = await window.showConfirm(
+      '重置周限制',
+      `确定要重置 "${key.name}" 的周限制使用记录吗？\n\n这将清除当前周期的使用数据，下次请求时会开始新的7天周期。`,
+      '确定重置',
+      '取消'
+    )
+  } else {
+    confirmed = confirm(
+      `确定要重置 "${key.name}" 的周限制使用记录吗？\n\n这将清除当前周期的使用数据，下次请求时会开始新的7天周期。`
+    )
+  }
+
+  if (!confirmed) return
+
+  try {
+    await apiKeysStore.resetWeeklyCost(key.id)
+    showToast('success', '周限制重置成功')
+    await loadApiKeys()
+  } catch (error) {
+    showToast('error', error.message || '重置周限制失败')
+  }
+}
+
 // 切换API Key状态（激活/禁用）
 const toggleApiKeyStatus = async (key) => {
   let confirmed = true
@@ -3710,6 +3792,39 @@ const formatWindowTime = (seconds) => {
     return `${minutes}m${secs}s`
   } else {
     return `${secs}s`
+  }
+}
+
+// 格式化周限重置时间（显示为相对时间）
+const formatWeeklyResetTime = (resetTimeStr, isActive) => {
+  // 未激活状态
+  if (!isActive) {
+    return '未激活'
+  }
+
+  // 已激活但没有时间数据
+  if (!resetTimeStr) {
+    return '-'
+  }
+
+  // 已激活，显示倒计时
+  const resetTime = new Date(resetTimeStr)
+  const now = new Date()
+  const diffMs = resetTime - now
+
+  if (diffMs < 0) {
+    return '已过期'
+  }
+
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffDays > 0) {
+    const hours = diffHours % 24
+    return `${diffDays}天${hours}时`
+  } else {
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+    return `${diffHours}h${minutes}m`
   }
 }
 
@@ -4212,13 +4327,16 @@ watch(searchMode, () => {
 })
 
 // 监听分页变化，更新全选状态
+// 🚀 监听分页变化，更新选中状态（localStorage保存已在计算属性setter中处理）
 watch([currentPage, pageSize], () => {
   updateSelectAllState()
 })
 
-// 监听每页显示条数变化，保存到 localStorage
-watch(pageSize, (newSize) => {
-  localStorage.setItem('apiKeysPageSize', newSize.toString())
+// 🚀 监听排序字段变化，服务端分页模式下重新加载数据
+watch([apiKeysSortBy, apiKeysSortOrder], () => {
+  // 服务端分页：重置到第一页并重新加载数据
+  apiKeysStore.pagination.page = 1
+  loadApiKeys()
 })
 
 // 监听API Keys数据变化，清理无效的选中状态

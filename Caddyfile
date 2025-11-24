@@ -1,0 +1,50 @@
+{$CADDY_DOMAIN} {
+    # Enable automatic HTTPS
+    tls {$CADDY_EMAIL}
+
+    # Claude Relay Service routes - use handle instead of handle_path to preserve full path
+    handle /admin/* {
+        reverse_proxy claude-relay:3000
+    }
+
+    handle /web/* {
+        reverse_proxy claude-relay:3000
+    }
+
+    handle /admin-next/* {
+        reverse_proxy claude-relay:3000
+    }
+
+    # API routes for claude-relay
+    handle /api/* {
+        reverse_proxy claude-relay:3000
+    }
+
+    handle /apiStats/* {
+        reverse_proxy claude-relay:3000
+    }
+    
+    handle /api-* {
+        reverse_proxy claude-relay:3000
+    }
+
+    # Health check route
+    handle /health* {
+        reverse_proxy claude-relay:3000
+    }
+
+    # Redirect root path to www.claude-code.club
+    handle / {
+        redir https://www.claude-code.club{uri} permanent
+    }
+
+    # Default route to cc-club-website
+    handle {
+        reverse_proxy cc-club-website:80
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+    }
+}

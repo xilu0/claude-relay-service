@@ -50,6 +50,12 @@ function getWeekStringInTimezone(date = new Date()) {
   return `${year}-W${String(weekNumber).padStart(2, '0')}`
 }
 
+// 获取配置时区的月份字符串 (YYYY-MM)
+function getMonthStringInTimezone(date = new Date()) {
+  const tzDate = getDateInTimezone(date)
+  return `${tzDate.getUTCFullYear()}-${String(tzDate.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
 class RedisClient {
   constructor() {
     this.client = null
@@ -647,6 +653,98 @@ class RedisClient {
     }
   }
 
+  /**
+   * 📊 获取API Key的历史使用统计数据（按小时、天或月）
+   * @param {string} keyId - API Key ID
+   * @param {'hourly'|'daily'|'monthly'} granularity - 时间粒度
+   * @param {number} limit - 要查询的时间段数量 (1-100)
+   * @returns {Promise<Array<Object>>} 历史统计数据数组
+   */
+  async getHistoricalUsageStats(keyId, granularity, limit) {
+    // 参数验证
+    if (!limit || limit < 1 || limit > 100) {
+      throw new Error('Invalid limit. Must be between 1 and 100.')
+    }
+
+    const client = this.getClientSafe()
+    const now = new Date()
+    const dataPoints = []
+    const pipeline = client.pipeline()
+    const keysToFetch = []
+
+    for (let i = 0; i < limit; i++) {
+      let date
+      let key = ''
+      let timestamp = ''
+
+      // 根据粒度计算日期和构建key
+      // 使用毫秒偏移确保与配置时区的 key 字符串一致
+      switch (granularity) {
+        case 'hourly':
+          // 每小时 3600000 毫秒
+          date = new Date(now.getTime() - i * 3600000)
+          timestamp = `${getDateStringInTimezone(date)}:${String(getHourInTimezone(date)).padStart(2, '0')}`
+          key = `usage:hourly:${keyId}:${timestamp}`
+          break
+        case 'daily':
+          // 每天 86400000 毫秒
+          date = new Date(now.getTime() - i * 86400000)
+          timestamp = getDateStringInTimezone(date)
+          key = `usage:daily:${keyId}:${timestamp}`
+          break
+        case 'monthly':
+          // 月份计算需要特殊处理，避免边界问题
+          // 先获取当前配置时区的年月，再进行月份偏移
+          date = new Date(now)
+          // 先设置日期为1号，避免月份溢出问题（如3月31日减1个月）
+          date.setUTCDate(1)
+          date.setUTCMonth(date.getUTCMonth() - i)
+          timestamp = getMonthStringInTimezone(date)
+          key = `usage:monthly:${keyId}:${timestamp}`
+          break
+        default:
+          throw new Error('Invalid granularity. Must be "hourly", "daily", or "monthly".')
+      }
+
+      keysToFetch.push({ key, timestamp: date.getTime() }) // 存储原始时间戳以便排序
+      pipeline.hgetall(key)
+    }
+
+    const results = await pipeline.exec()
+
+    // 假设results的顺序与keysToFetch的顺序一致
+    for (let i = 0; i < keysToFetch.length; i++) {
+      const { key, timestamp } = keysToFetch[i]
+      const [error, data] = results[i]
+
+      if (error) {
+        logger.error(`❌ Failed to fetch historical data for key ${key}:`, error)
+        continue
+      }
+
+      // 处理数据，确保所有字段都是数字，并提供默认值
+      const requests = parseInt(data?.requests || '0')
+      const inputTokens = parseInt(data?.inputTokens || '0')
+      const outputTokens = parseInt(data?.outputTokens || '0')
+      const cacheCreateTokens = parseInt(data?.cacheCreateTokens || '0')
+      const cacheReadTokens = parseInt(data?.cacheReadTokens || '0')
+      const allTokens = parseInt(data?.allTokens || '0')
+
+      dataPoints.push({
+        timestamp, // 返回时间戳，前端可以格式化
+        requests,
+        inputTokens,
+        outputTokens,
+        cacheCreateTokens,
+        cacheReadTokens,
+        allTokens
+      })
+    }
+
+    // 确保数据点按时间升序排列，方便前端展示
+    return dataPoints.sort((a, b) => a.timestamp - b.timestamp)
+  }
+
   async addUsageRecord(keyId, record, maxRecords = 200) {
     const listKey = `usage:records:${keyId}`
     const client = this.getClientSafe()
@@ -790,6 +888,306 @@ class RedisClient {
 
     const results = await pipeline.exec()
     logger.debug(`💰 Opus cost incremented successfully, new weekly total: $${results[0][1]}`)
+  }
+
+  // 💰 增加周总成本（固定7天周期窗口，所有模型）
+  async incrementWeeklyCost(keyId, amount) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
+    const now = Date.now()
+    const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天（毫秒）
+
+    logger.debug(`💰 Incrementing weekly cost for ${keyId}, amount: ${amount}, timestamp: ${now}`)
+
+    // 获取窗口开始时间
+    let windowStart = await this.client.get(windowStartKey)
+
+    if (!windowStart) {
+      // 第一次请求，设置窗口开始时间
+      await this.client.set(windowStartKey, now, 'PX', windowDuration)
+      await this.client.set(totalCostKey, 0, 'PX', windowDuration)
+      windowStart = now
+      logger.debug(`💰 Started new weekly cycle for ${keyId} at ${new Date(now).toISOString()}`)
+    } else {
+      windowStart = parseInt(windowStart)
+
+      // 检查窗口是否已过期
+      if (now - windowStart >= windowDuration) {
+        // 窗口已过期，重置
+        await this.client.set(windowStartKey, now, 'PX', windowDuration)
+        await this.client.set(totalCostKey, 0, 'PX', windowDuration)
+        windowStart = now
+        logger.debug(
+          `💰 Weekly cycle expired for ${keyId}, started new cycle at ${new Date(now).toISOString()}`
+        )
+      }
+    }
+
+    // 增加本次费用
+    await this.client.incrbyfloat(totalCostKey, amount)
+    logger.debug(`💰 Weekly cost incremented successfully for ${keyId}, added $${amount}`)
+  }
+
+  // 💰 获取周总成本（固定7天周期窗口）
+  async getWeeklyCost(keyId) {
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
+
+    // 直接读取当前周期的总费用
+    const cost = await this.client.get(totalCostKey)
+    const totalCost = parseFloat(cost || 0)
+
+    logger.debug(`💰 Weekly cost for ${keyId}: $${totalCost.toFixed(6)}`)
+    return totalCost
+  }
+
+  // 💰 获取周成本重置时间（周期起点 + 7天）
+  async getWeeklyCostResetTime(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const windowDuration = 7 * 24 * 60 * 60 * 1000 // 7天（毫秒）
+
+    // 获取周期起点时间
+    const windowStart = await this.client.get(windowStartKey)
+
+    if (!windowStart) {
+      // 如果没有周期记录，返回当前时间 + 7天（默认值）
+      logger.debug(`💰 No active weekly cycle for ${keyId}, using default reset time`)
+      return new Date(Date.now() + windowDuration)
+    }
+
+    // 重置时间 = 周期起点 + 7天
+    const resetTime = new Date(parseInt(windowStart) + windowDuration)
+
+    logger.debug(
+      `💰 Weekly cost reset time for ${keyId}: ${resetTime.toISOString()} (cycle started at ${new Date(parseInt(windowStart)).toISOString()})`
+    )
+
+    return resetTime
+  }
+
+  // 检查周限是否已激活（是否有过使用记录）
+  async isWeeklyCostActive(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const exists = await this.client.exists(windowStartKey)
+    return exists === 1
+  }
+
+  // 💰 获取周成本开始时间（周期起点时间）
+  async getWeeklyCostStartTime(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+
+    // 获取周期起点时间
+    const windowStart = await this.client.get(windowStartKey)
+
+    if (!windowStart) {
+      // 如果没有周期记录，返回 null
+      logger.debug(`💰 No active weekly cycle for ${keyId}, no start time`)
+      return null
+    }
+
+    // 返回周期起点时间
+    const startTime = new Date(parseInt(windowStart))
+
+    logger.debug(`💰 Weekly cost start time for ${keyId}: ${startTime.toISOString()}`)
+
+    return startTime
+  }
+
+  // 💰 重置周成本记录（清除周期数据，下次请求时会自动创建新周期）
+  async resetWeeklyCost(keyId) {
+    const windowStartKey = `usage:cost:weekly:window_start:${keyId}`
+    const totalCostKey = `usage:cost:weekly:total:${keyId}`
+
+    logger.debug(`💰 Resetting weekly cost for ${keyId}`)
+
+    // 删除周期开始时间和总成本
+    await Promise.all([this.client.del(windowStartKey), this.client.del(totalCostKey)])
+
+    logger.debug(`💰 Weekly cost reset successfully for ${keyId}`)
+  }
+
+  // 🚀 加油包相关方法
+
+  // 🚀 获取加油包已使用金额
+  async getBoosterPackUsed(keyId) {
+    const usedKey = `usage:booster:used:${keyId}`
+    const used = await this.client.get(usedKey)
+    const result = parseFloat(used || 0)
+    logger.debug(`🚀 Getting booster pack used for ${keyId}: $${result}`)
+    return result
+  }
+
+  // 🚀 增加加油包已使用金额
+  async incrementBoosterPackUsed(keyId, amount) {
+    const usedKey = `usage:booster:used:${keyId}`
+
+    // Round to 6 decimal places to prevent floating point drift
+    const roundedAmount = Math.round(amount * 1000000) / 1000000
+
+    logger.debug(
+      `🚀 Incrementing booster pack used for ${keyId}, amount: $${roundedAmount.toFixed(6)}`
+    )
+
+    const newTotal = await this.client.incrbyfloat(usedKey, roundedAmount)
+    // Round the result to prevent accumulated errors
+    const roundedTotal = Math.round(parseFloat(newTotal) * 1000000) / 1000000
+
+    logger.debug(
+      `🚀 Booster pack used incremented successfully, new total: $${roundedTotal.toFixed(6)}`
+    )
+
+    return roundedTotal
+  }
+
+  // 🚀 添加加油包使用记录（Sorted Set存储）
+  async addBoosterPackRecord(keyId, record) {
+    const recordsKey = `usage:booster:records:${keyId}`
+    const { timestamp, amount, model, accountType } = record
+
+    logger.debug(
+      `🚀 Adding booster pack record for ${keyId}: timestamp=${timestamp}, amount=$${amount}, model=${model}`
+    )
+
+    // 使用 Sorted Set 存储，score 为时间戳，value 为 JSON 字符串
+    const value = JSON.stringify({
+      timestamp,
+      amount,
+      model,
+      accountType: accountType || 'unknown'
+    })
+
+    const pipeline = this.client.pipeline()
+    pipeline.zadd(recordsKey, timestamp, value)
+    // 设置过期时间为 90 天（保留历史记录）
+    pipeline.expire(recordsKey, 90 * 24 * 3600)
+
+    await pipeline.exec()
+    logger.debug(`🚀 Booster pack record added successfully for ${keyId}`)
+  }
+
+  // 🚀 获取加油包使用记录（时间范围查询）
+  async getBoosterPackRecords(keyId, startTime = 0, endTime = Date.now()) {
+    const recordsKey = `usage:booster:records:${keyId}`
+
+    logger.debug(
+      `🚀 Getting booster pack records for ${keyId}, range: ${new Date(startTime).toISOString()} - ${new Date(endTime).toISOString()}`
+    )
+
+    // 获取时间范围内的所有记录
+    const records = await this.client.zrangebyscore(recordsKey, startTime, endTime)
+
+    if (!records || records.length === 0) {
+      logger.debug(`🚀 No booster pack records found for ${keyId}`)
+      return []
+    }
+
+    // 解析 JSON 字符串
+    const parsedRecords = records
+      .map((record) => {
+        try {
+          return JSON.parse(record)
+        } catch (error) {
+          logger.error(`Failed to parse booster pack record: ${record}`, error)
+          return null
+        }
+      })
+      .filter((r) => r !== null)
+
+    logger.debug(`🚀 Found ${parsedRecords.length} booster pack records for ${keyId}`)
+    return parsedRecords
+  }
+
+  // 🚀 获取加油包使用统计（按时间聚合）
+  async getBoosterPackStats(keyId, groupBy = 'day') {
+    const now = Date.now()
+
+    // 根据 groupBy 确定时间范围
+    let startTime
+    switch (groupBy) {
+      case 'hour':
+        startTime = now - 24 * 60 * 60 * 1000 // 过去24小时
+        break
+      case 'day':
+        startTime = now - 30 * 24 * 60 * 60 * 1000 // 过去30天
+        break
+      case 'week':
+        startTime = now - 12 * 7 * 24 * 60 * 60 * 1000 // 过去12周
+        break
+      default:
+        startTime = 0 // 全部历史
+    }
+
+    const records = await this.getBoosterPackRecords(keyId, startTime, now)
+
+    if (records.length === 0) {
+      return {
+        totalAmount: 0,
+        recordCount: 0,
+        byPeriod: {},
+        byModel: {}
+      }
+    }
+
+    // 按时间段和模型聚合
+    const byPeriod = {}
+    const byModel = {}
+    let totalAmount = 0
+
+    for (const record of records) {
+      totalAmount += record.amount
+
+      // 按时间段聚合
+      const date = new Date(record.timestamp)
+      let periodKey
+      switch (groupBy) {
+        case 'hour':
+          periodKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')} ${String(date.getUTCHours()).padStart(2, '0')}:00`
+          break
+        case 'day':
+          periodKey = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
+          break
+        case 'week': {
+          // ISO 8601 week calculation
+          const weekStart = new Date(date)
+          weekStart.setUTCDate(date.getUTCDate() - date.getUTCDay())
+          weekStart.setUTCHours(0, 0, 0, 0)
+
+          // Get ISO week number
+          const yearStart = new Date(Date.UTC(weekStart.getUTCFullYear(), 0, 1))
+          const weekNo = Math.ceil((weekStart - yearStart) / (7 * 24 * 60 * 60 * 1000) + 1)
+
+          periodKey = `${weekStart.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+          break
+        }
+        default:
+          periodKey = 'all'
+      }
+
+      byPeriod[periodKey] = (byPeriod[periodKey] || 0) + record.amount
+
+      // 按模型聚合
+      const modelKey = record.model || 'unknown'
+      byModel[modelKey] = (byModel[modelKey] || 0) + record.amount
+    }
+
+    return {
+      totalAmount,
+      recordCount: records.length,
+      byPeriod,
+      byModel
+    }
+  }
+
+  // 🚀 重置加油包使用记录
+  async resetBoosterPackUsed(keyId) {
+    const usedKey = `usage:booster:used:${keyId}`
+    const recordsKey = `usage:booster:records:${keyId}`
+
+    logger.debug(`🚀 Resetting booster pack for ${keyId}`)
+
+    // 删除已使用金额和使用记录
+    await Promise.all([this.client.del(usedKey), this.client.del(recordsKey)])
+
+    logger.debug(`🚀 Booster pack reset successfully for ${keyId}`)
   }
 
   // 💰 计算账户的每日费用（基于模型使用）

@@ -274,6 +274,56 @@
           </div>
 
           <div>
+            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+              >周费用限制 (美元)</label
+            >
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '200'"
+                >
+                  $200
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '500'"
+                >
+                  $500
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = '1000'"
+                >
+                  $1000
+                </button>
+                <button
+                  class="rounded bg-gray-100 px-2 py-1 text-xs font-medium hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  type="button"
+                  @click="form.weeklyCostLimit = ''"
+                >
+                  自定义
+                </button>
+              </div>
+              <input
+                v-model="form.weeklyCostLimit"
+                class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                min="0"
+                placeholder="0 表示无限制"
+                step="0.01"
+                type="number"
+              />
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                设置此 API Key 的滚动7天窗口内的总费用限制（所有模型），超过限制将拒绝请求，0
+                或留空表示无限制
+              </p>
+            </div>
+          </div>
+
+          <div>
             <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
               >总费用限制 (美元)</label
             >
@@ -800,6 +850,7 @@ const form = reactive({
   dailyCostLimit: '',
   totalCostLimit: '',
   weeklyOpusCostLimit: '',
+  weeklyCostLimit: '',
   permissions: 'all',
   claudeAccountId: '',
   geminiAccountId: '',
@@ -867,6 +918,37 @@ const removeTag = (index) => {
 
 // 更新 API Key
 const updateApiKey = async () => {
+  // 验证周成本限制
+  if (form.weeklyCostLimit !== '' && form.weeklyCostLimit !== null) {
+    const limit = parseFloat(form.weeklyCostLimit)
+    if (isNaN(limit)) {
+      showToast('周成本限制必须是有效的数字', 'error')
+      return
+    }
+    if (limit < 0) {
+      showToast('周成本限制不能为负数', 'error')
+      return
+    }
+    if (limit > 1000000) {
+      let confirmed = false
+      if (window.showConfirm) {
+        confirmed = await window.showConfirm(
+          '周成本限制确认',
+          `周成本限制 $${limit.toFixed(2)} 非常高，请确认是否正确？`,
+          '确认',
+          '返回修改'
+        )
+      } else {
+        confirmed = confirm(`周成本限制 $${limit.toFixed(2)} 非常高，请确认是否正确？`)
+      }
+      if (!confirmed) {
+        return
+      }
+    }
+    // 保留 2 位小数
+    form.weeklyCostLimit = limit.toFixed(2)
+  }
+
   // 检查是否设置了时间窗口但费用限制为0
   if (form.rateLimitWindow && (!form.rateLimitCost || parseFloat(form.rateLimitCost) === 0)) {
     let confirmed = false
@@ -920,6 +1002,10 @@ const updateApiKey = async () => {
       weeklyOpusCostLimit:
         form.weeklyOpusCostLimit !== '' && form.weeklyOpusCostLimit !== null
           ? parseFloat(form.weeklyOpusCostLimit)
+          : 0,
+      weeklyCostLimit:
+        form.weeklyCostLimit !== '' && form.weeklyCostLimit !== null
+          ? parseFloat(form.weeklyCostLimit)
           : 0,
       permissions: form.permissions,
       tags: form.tags
@@ -1254,6 +1340,7 @@ onMounted(async () => {
   form.dailyCostLimit = props.apiKey.dailyCostLimit || ''
   form.totalCostLimit = props.apiKey.totalCostLimit || ''
   form.weeklyOpusCostLimit = props.apiKey.weeklyOpusCostLimit || ''
+  form.weeklyCostLimit = props.apiKey.weeklyCostLimit || ''
   form.permissions = props.apiKey.permissions || 'all'
   // 处理 Claude 账号（区分 OAuth 和 Console）
   if (props.apiKey.claudeConsoleAccountId) {

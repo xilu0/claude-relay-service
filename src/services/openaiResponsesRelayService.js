@@ -277,7 +277,7 @@ class OpenAIResponsesRelayService {
       }
 
       // 处理非流式响应
-      return this._handleNormalResponse(response, res, account, apiKeyData, req.body?.model)
+      return this._handleNormalResponse(response, res, account, apiKeyData, req.body?.model, req)
     } catch (error) {
       // 清理 AbortController
       if (abortController && !abortController.signal.aborted) {
@@ -538,7 +538,8 @@ class OpenAIResponsesRelayService {
             cacheCreateTokens,
             cacheReadTokens,
             modelToRecord,
-            account.id
+            account.id,
+            req.useBooster || false // 传递是否使用加油包
           )
 
           logger.info(
@@ -634,7 +635,7 @@ class OpenAIResponsesRelayService {
   }
 
   // 处理非流式响应
-  async _handleNormalResponse(response, res, account, apiKeyData, requestedModel) {
+  async _handleNormalResponse(response, res, account, apiKeyData, requestedModel, req) {
     const responseData = response.data
 
     // 提取 usage 数据和实际 model
@@ -666,7 +667,8 @@ class OpenAIResponsesRelayService {
           cacheCreateTokens,
           cacheReadTokens,
           actualModel,
-          account.id
+          account.id,
+          req.useBooster || false // 传递是否使用加油包
         )
 
         logger.info(
