@@ -189,7 +189,7 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
         throw new Error(response.message || '获取统计失败')
       }
     } catch (err) {
-      console.error('获取API Key统计失败:', err)
+      // console.error('获取API Key统计失败:', err)
       return null
     }
   }
@@ -214,46 +214,36 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
         throw new Error(response.message || '获取标签失败')
       }
     } catch (err) {
-      console.error('获取标签失败:', err)
+      // console.error('获取标签失败:', err)
       return []
     }
   }
 
   // 🚀 获取加油包使用记录
   const fetchBoosterPackRecords = async (keyId, startTime = null, endTime = null) => {
-    try {
-      const params = {}
-      if (startTime) params.startTime = startTime
-      if (endTime) params.endTime = endTime
+    const params = {}
+    if (startTime) params.startTime = startTime
+    if (endTime) params.endTime = endTime
 
-      const response = await apiClient.get(`/admin/api-keys/${keyId}/booster-pack/records`, {
-        params
-      })
-      if (response.success) {
-        return response.records || []
-      } else {
-        throw new Error(response.message || '获取加油包使用记录失败')
-      }
-    } catch (err) {
-      console.error('获取加油包使用记录失败:', err)
-      throw err
+    const response = await apiClient.get(`/admin/api-keys/${keyId}/booster-pack/records`, {
+      params
+    })
+    if (response.success) {
+      return response.records || []
+    } else {
+      throw new Error(response.message || '获取加油包使用记录失败')
     }
   }
 
   // 🚀 获取加油包使用统计
   const fetchBoosterPackStats = async (keyId, groupBy = 'day') => {
-    try {
-      const response = await apiClient.get(`/admin/api-keys/${keyId}/booster-pack/stats`, {
-        params: { groupBy }
-      })
-      if (response.success) {
-        return response.stats || null
-      } else {
-        throw new Error(response.message || '获取加油包统计失败')
-      }
-    } catch (err) {
-      console.error('获取加油包统计失败:', err)
-      throw err
+    const response = await apiClient.get(`/admin/api-keys/${keyId}/booster-pack/stats`, {
+      params: { groupBy }
+    })
+    if (response.success) {
+      return response.stats || null
+    } else {
+      throw new Error(response.message || '获取加油包统计失败')
     }
   }
 

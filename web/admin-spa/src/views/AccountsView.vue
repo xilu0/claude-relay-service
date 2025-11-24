@@ -2541,8 +2541,8 @@ const loadAccounts = async (forceReload = false) => {
 
     // 异步加载 Claude OAuth 账户的 usage 数据
     if (filteredAccounts.some((acc) => acc.platform === 'claude')) {
-      loadClaudeUsage().catch((err) => {
-        console.debug('Claude usage loading failed:', err)
+      loadClaudeUsage().catch(() => {
+        // console.debug('Claude usage loading failed:', err)
       })
     }
   } catch (error) {
@@ -2571,7 +2571,7 @@ const loadClaudeUsage = async () => {
       })
     }
   } catch (error) {
-    console.debug('Failed to load Claude usage data:', error)
+    // console.debug('Failed to load Claude usage data:', error)
   }
 }
 
@@ -3937,7 +3937,7 @@ const handleSaveAccountExpiry = async ({ accountId, expiresAt }) => {
       }
     }
   } catch (error) {
-    console.error('更新账户过期时间失败:', error)
+    // console.error('更新账户过期时间失败:', error)
     showToast('更新失败', 'error')
     // 重置保存状态
     if (expiryEditModalRef.value) {

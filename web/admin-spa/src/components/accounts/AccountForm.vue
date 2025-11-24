@@ -5219,7 +5219,7 @@ const handleApiKeyRefresh = async () => {
       await refresher()
       return
     } catch (error) {
-      console.error('刷新账户列表失败:', error)
+      // console.error('刷新账户列表失败:', error)
     }
   }
 }
