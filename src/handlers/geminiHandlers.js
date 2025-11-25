@@ -419,6 +419,9 @@ async function handleMessages(req, res) {
       }
     } else {
       // OAuth 账户：使用现有的 sendGeminiRequest
+      // 智能处理项目ID：优先使用配置的 projectId，降级到临时 tempProjectId
+      const effectiveProjectId = account.projectId || account.tempProjectId || null
+
       geminiResponse = await sendGeminiRequest({
         messages,
         model,
@@ -429,7 +432,7 @@ async function handleMessages(req, res) {
         proxy: account.proxy,
         apiKeyId: apiKeyData.id,
         signal: abortController.signal,
-        projectId: account.projectId,
+        projectId: effectiveProjectId,
         accountId: account.id
       })
     }
@@ -1104,14 +1107,21 @@ async function handleGenerateContent(req, res) {
 
     const client = await geminiAccountService.getOauthClient(accessToken, refreshToken, proxyConfig)
 
-    // 智能处理项目ID
-    const effectiveProjectId = account.projectId || project || null
+    // 智能处理项目ID：优先使用配置的 projectId，降级到临时 tempProjectId，最后使用请求参数
+    const effectiveProjectId = account.projectId || account.tempProjectId || project || null
 
     logger.info('📋 项目ID处理逻辑', {
       accountProjectId: account.projectId,
+      accountTempProjectId: account.tempProjectId,
       requestProjectId: project,
       effectiveProjectId,
-      decision: account.projectId ? '使用账户配置' : project ? '使用请求参数' : '不使用项目ID'
+      decision: account.projectId
+        ? '使用账户配置'
+        : account.tempProjectId
+          ? '使用临时项目ID'
+          : project
+            ? '使用请求参数'
+            : '不使用项目ID'
     })
 
     const response = await geminiAccountService.generateContent(
@@ -1286,14 +1296,21 @@ async function handleStreamGenerateContent(req, res) {
 
     const client = await geminiAccountService.getOauthClient(accessToken, refreshToken, proxyConfig)
 
-    // 智能处理项目ID
-    const effectiveProjectId = account.projectId || project || null
+    // 智能处理项目ID：优先使用配置的 projectId，降级到临时 tempProjectId，最后使用请求参数
+    const effectiveProjectId = account.projectId || account.tempProjectId || project || null
 
     logger.info('📋 流式请求项目ID处理逻辑', {
       accountProjectId: account.projectId,
+      accountTempProjectId: account.tempProjectId,
       requestProjectId: project,
       effectiveProjectId,
-      decision: account.projectId ? '使用账户配置' : project ? '使用请求参数' : '不使用项目ID'
+      decision: account.projectId
+        ? '使用账户配置'
+        : account.tempProjectId
+          ? '使用临时项目ID'
+          : project
+            ? '使用请求参数'
+            : '不使用项目ID'
     })
 
     const streamResponse = await geminiAccountService.generateContentStream(
