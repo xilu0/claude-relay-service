@@ -1,3 +1,20 @@
+/**
+ * 标准 Gemini API 路由模块
+ *
+ * 该模块处理标准 Gemini API 格式的请求：
+ * - v1beta/models/:modelName:generateContent
+ * - v1beta/models/:modelName:streamGenerateContent
+ * - v1beta/models/:modelName:countTokens
+ * - v1beta/models/:modelName:loadCodeAssist
+ * - v1beta/models/:modelName:onboardUser
+ * - v1/models/:modelName:* (同上)
+ * - v1internal:* (内部格式)
+ * - v1beta/models, v1/models (模型列表)
+ * - v1beta/models/:modelName, v1/models/:modelName (模型详情)
+ *
+ * 所有处理函数都从 geminiHandlers.js 导入，以避免代码重复。
+ */
+
 const express = require('express')
 const router = express.Router()
 const { authenticateApiKey } = require('../middleware/auth')
@@ -745,7 +762,27 @@ async function handleStandardStreamGenerateContent(req, res) {
   }
 }
 
+// 从 handlers/geminiHandlers.js 导入所有处理函数
+const {
+  ensureGeminiPermissionMiddleware,
+  handleLoadCodeAssist,
+  handleOnboardUser,
+  handleCountTokens,
+  handleGenerateContent,
+  handleStreamGenerateContent,
+  handleStandardGenerateContent,
+  handleStandardStreamGenerateContent,
+  handleModels,
+  handleModelDetails
+} = require('../handlers/geminiHandlers')
+
+// ============================================================================
 // v1beta 版本的标准路由 - 支持动态模型名称
+// ============================================================================
+
+/**
+ * POST /v1beta/models/:modelName:loadCodeAssist
+ */
 router.post(
   '/v1beta/models/:modelName\\:loadCodeAssist',
   authenticateApiKey,
@@ -756,6 +793,9 @@ router.post(
   }
 )
 
+/**
+ * POST /v1beta/models/:modelName:onboardUser
+ */
 router.post(
   '/v1beta/models/:modelName\\:onboardUser',
   authenticateApiKey,
@@ -766,6 +806,9 @@ router.post(
   }
 )
 
+/**
+ * POST /v1beta/models/:modelName:countTokens
+ */
 router.post(
   '/v1beta/models/:modelName\\:countTokens',
   authenticateApiKey,
@@ -776,7 +819,10 @@ router.post(
   }
 )
 
-// 使用专门的处理函数处理标准 Gemini API 格式
+/**
+ * POST /v1beta/models/:modelName:generateContent
+ * 使用专门的标准 API 处理函数（支持 OAuth 和 API 账户）
+ */
 router.post(
   '/v1beta/models/:modelName\\:generateContent',
   authenticateApiKey,
@@ -784,6 +830,10 @@ router.post(
   handleStandardGenerateContent
 )
 
+/**
+ * POST /v1beta/models/:modelName:streamGenerateContent
+ * 使用专门的标准 API 流式处理函数（支持 OAuth 和 API 账户）
+ */
 router.post(
   '/v1beta/models/:modelName\\:streamGenerateContent',
   authenticateApiKey,
@@ -791,7 +841,13 @@ router.post(
   handleStandardStreamGenerateContent
 )
 
+// ============================================================================
 // v1 版本的标准路由（为了完整性，虽然 Gemini 主要使用 v1beta）
+// ============================================================================
+
+/**
+ * POST /v1/models/:modelName:generateContent
+ */
 router.post(
   '/v1/models/:modelName\\:generateContent',
   authenticateApiKey,
@@ -799,6 +855,9 @@ router.post(
   handleStandardGenerateContent
 )
 
+/**
+ * POST /v1/models/:modelName:streamGenerateContent
+ */
 router.post(
   '/v1/models/:modelName\\:streamGenerateContent',
   authenticateApiKey,
@@ -806,6 +865,9 @@ router.post(
   handleStandardStreamGenerateContent
 )
 
+/**
+ * POST /v1/models/:modelName:countTokens
+ */
 router.post(
   '/v1/models/:modelName\\:countTokens',
   authenticateApiKey,
@@ -816,7 +878,13 @@ router.post(
   }
 )
 
-// v1internal 版本的标准路由（这些使用原有的处理函数，因为格式不同）
+// ============================================================================
+// v1internal 版本的标准路由（这些使用内部格式的处理函数）
+// ============================================================================
+
+/**
+ * POST /v1internal:loadCodeAssist
+ */
 router.post(
   '/v1internal\\:loadCodeAssist',
   authenticateApiKey,
@@ -827,6 +895,9 @@ router.post(
   }
 )
 
+/**
+ * POST /v1internal:onboardUser
+ */
 router.post(
   '/v1internal\\:onboardUser',
   authenticateApiKey,
@@ -837,6 +908,9 @@ router.post(
   }
 )
 
+/**
+ * POST /v1internal:countTokens
+ */
 router.post(
   '/v1internal\\:countTokens',
   authenticateApiKey,
@@ -847,132 +921,85 @@ router.post(
   }
 )
 
-// v1internal 使用不同的处理逻辑，因为它们不包含模型在 URL 中
+/**
+ * POST /v1internal:generateContent
+ * v1internal 格式使用内部格式的处理函数
+ */
 router.post(
   '/v1internal\\:generateContent',
   authenticateApiKey,
   ensureGeminiPermissionMiddleware,
   (req, res, next) => {
     logger.info(`Standard Gemini API request (v1internal): ${req.method} ${req.originalUrl}`)
-    // v1internal 格式不同，使用原有的处理函数
-    const { handleGenerateContent } = require('./geminiRoutes')
     handleGenerateContent(req, res, next)
   }
 )
 
+/**
+ * POST /v1internal:streamGenerateContent
+ * v1internal 格式使用内部格式的处理函数
+ */
 router.post(
   '/v1internal\\:streamGenerateContent',
   authenticateApiKey,
   ensureGeminiPermissionMiddleware,
   (req, res, next) => {
     logger.info(`Standard Gemini API request (v1internal): ${req.method} ${req.originalUrl}`)
-    // v1internal 格式不同，使用原有的处理函数
-    const { handleStreamGenerateContent } = require('./geminiRoutes')
     handleStreamGenerateContent(req, res, next)
   }
 )
 
-// 添加标准 Gemini API 的模型列表端点
-router.get(
-  '/v1beta/models',
-  authenticateApiKey,
-  ensureGeminiPermissionMiddleware,
-  async (req, res) => {
-    try {
-      logger.info('Standard Gemini API models request')
-      // 直接调用 geminiRoutes 中的模型处理逻辑
-      const geminiRoutes = require('./geminiRoutes')
-      const modelHandler = geminiRoutes.stack.find(
-        (layer) => layer.route && layer.route.path === '/models' && layer.route.methods.get
-      )
-      if (modelHandler && modelHandler.route.stack[1]) {
-        // 调用处理函数（跳过第一个 authenticateApiKey 中间件）
-        modelHandler.route.stack[1].handle(req, res)
-      } else {
-        res.status(500).json({ error: 'Models handler not found' })
-      }
-    } catch (error) {
-      logger.error('Error in standard models endpoint:', error)
-      res.status(500).json({
-        error: {
-          message: 'Failed to retrieve models',
-          type: 'api_error'
-        }
-      })
-    }
-  }
-)
+// ============================================================================
+// 模型列表端点
+// ============================================================================
 
-router.get('/v1/models', authenticateApiKey, ensureGeminiPermissionMiddleware, async (req, res) => {
-  try {
-    logger.info('Standard Gemini API models request (v1)')
-    // 直接调用 geminiRoutes 中的模型处理逻辑
-    const geminiRoutes = require('./geminiRoutes')
-    const modelHandler = geminiRoutes.stack.find(
-      (layer) => layer.route && layer.route.path === '/models' && layer.route.methods.get
-    )
-    if (modelHandler && modelHandler.route.stack[1]) {
-      modelHandler.route.stack[1].handle(req, res)
-    } else {
-      res.status(500).json({ error: 'Models handler not found' })
-    }
-  } catch (error) {
-    logger.error('Error in standard models endpoint (v1):', error)
-    res.status(500).json({
-      error: {
-        message: 'Failed to retrieve models',
-        type: 'api_error'
-      }
-    })
-  }
+/**
+ * GET /v1beta/models
+ * 获取模型列表（v1beta 版本）
+ */
+router.get('/v1beta/models', authenticateApiKey, ensureGeminiPermissionMiddleware, (req, res) => {
+  logger.info('Standard Gemini API models request (v1beta)')
+  handleModels(req, res)
 })
 
-// 添加模型详情端点
+/**
+ * GET /v1/models
+ * 获取模型列表（v1 版本）
+ */
+router.get('/v1/models', authenticateApiKey, ensureGeminiPermissionMiddleware, (req, res) => {
+  logger.info('Standard Gemini API models request (v1)')
+  handleModels(req, res)
+})
+
+// ============================================================================
+// 模型详情端点
+// ============================================================================
+
+/**
+ * GET /v1beta/models/:modelName
+ * 获取模型详情（v1beta 版本）
+ */
 router.get(
   '/v1beta/models/:modelName',
   authenticateApiKey,
   ensureGeminiPermissionMiddleware,
-  (req, res) => {
-    const { modelName } = req.params
-    logger.info(`Standard Gemini API model details request: ${modelName}`)
-
-    res.json({
-      name: `models/${modelName}`,
-      version: '001',
-      displayName: modelName,
-      description: `Gemini model: ${modelName}`,
-      inputTokenLimit: 1048576,
-      outputTokenLimit: 8192,
-      supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-      temperature: 1.0,
-      topP: 0.95,
-      topK: 40
-    })
-  }
+  handleModelDetails
 )
 
+/**
+ * GET /v1/models/:modelName
+ * 获取模型详情（v1 版本）
+ */
 router.get(
   '/v1/models/:modelName',
   authenticateApiKey,
   ensureGeminiPermissionMiddleware,
-  (req, res) => {
-    const { modelName } = req.params
-    logger.info(`Standard Gemini API model details request (v1): ${modelName}`)
-
-    res.json({
-      name: `models/${modelName}`,
-      version: '001',
-      displayName: modelName,
-      description: `Gemini model: ${modelName}`,
-      inputTokenLimit: 1048576,
-      outputTokenLimit: 8192,
-      supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-      temperature: 1.0,
-      topP: 0.95,
-      topK: 40
-    })
-  }
+  handleModelDetails
 )
+
+// ============================================================================
+// 初始化日志
+// ============================================================================
 
 logger.info('Standard Gemini API routes initialized')
 
