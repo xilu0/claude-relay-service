@@ -2708,10 +2708,10 @@ class ClaudeAccountService {
 
       // 如果状态是 allowed_warning 且账户设置了自动停止调度
       if (status === 'allowed_warning' && accountData.autoStopOnWarning === 'true') {
-        const alreadyAutoStopped =
-          accountData.schedulable === 'false' && accountData.fiveHourAutoStopped === 'true'
+        // 检查是否已经激活了警告并发限制
+        const alreadyWarningActive = accountData.fiveHourWarningActive === 'true'
 
-        if (!alreadyAutoStopped) {
+        if (!alreadyWarningActive) {
           const windowIdentifier =
             accountData.sessionWindowEnd || accountData.sessionWindowStart || 'unknown'
 
@@ -2723,15 +2723,25 @@ class ClaudeAccountService {
 
           const maxWarningsPerWindow = this.maxFiveHourWarningsPerWindow
 
+          // 获取警告时的并发限制（默认为1）
+          const warningConcurrentLimit = parseInt(accountData.warningConcurrentLimit || '1', 10)
+
           logger.warn(
-            `⚠️ Account ${accountData.name} (${accountId}) approaching 5h limit, auto-stopping scheduling`
+            `⚠️ Account ${accountData.name} (${accountId}) approaching 5h limit, limiting concurrency to ${warningConcurrentLimit}`
           )
-          accountData.schedulable = 'false'
-          // 使用独立的5小时限制自动停止标记
-          accountData.fiveHourAutoStopped = 'true'
-          accountData.fiveHourStoppedAt = nowIso
-          // 设置停止原因，供前端显示
-          accountData.stoppedReason = '5小时使用量接近限制，已自动停止调度'
+
+          // 保存原始的 maxConcurrentTasks（如果还没保存）
+          if (!accountData.originalMaxConcurrentTasks) {
+            accountData.originalMaxConcurrentTasks = accountData.maxConcurrentTasks || '0'
+          }
+
+          // 设置为警告时的并发限制（而不是完全停止调度）
+          accountData.maxConcurrentTasks = warningConcurrentLimit.toString()
+          // 标记警告状态激活
+          accountData.fiveHourWarningActive = 'true'
+          accountData.fiveHourWarningActivatedAt = nowIso
+          // 设置提示信息，供前端显示
+          accountData.stoppedReason = `5小时使用量接近限制，已限制并发为${warningConcurrentLimit}`
 
           const canSendWarning = warningCount < maxWarningsPerWindow
           let updatedWarningCount = warningCount
@@ -2753,7 +2763,7 @@ class ClaudeAccountService {
                 platform: 'claude',
                 status: 'warning',
                 errorCode: 'CLAUDE_5H_LIMIT_WARNING',
-                reason: '5小时使用量接近限制，已自动停止调度',
+                reason: `5小时使用量接近限制，已限制并发为${warningConcurrentLimit}`,
                 timestamp: getISOStringWithTimezone(now)
               })
             } catch (webhookError) {
@@ -2766,7 +2776,7 @@ class ClaudeAccountService {
           }
         } else {
           logger.debug(
-            `⚠️ Account ${accountData.name} (${accountId}) already auto-stopped for 5h limit, skipping duplicate warning`
+            `⚠️ Account ${accountData.name} (${accountId}) already has warning concurrency limit active, skipping duplicate warning`
           )
         }
       }
@@ -2900,9 +2910,13 @@ class ClaudeAccountService {
       const now = new Date()
 
       for (const account of accounts) {
-        // 只检查因5小时限制被自动停止的账号
-        // 重要：不恢复手动停止的账号（没有fiveHourAutoStopped标记的）
-        if (account.fiveHourAutoStopped === true && account.schedulable === false) {
+        // 检查因5小时限制被自动限制并发的账号（新逻辑）
+        // 或因5小时限制被自动停止的账号（旧逻辑，向后兼容）
+        const hasWarningConcurrencyLimit = account.fiveHourWarningActive === true
+        const hasLegacyAutoStop =
+          account.fiveHourAutoStopped === true && account.schedulable === false
+
+        if (hasWarningConcurrencyLimit || hasLegacyAutoStop) {
           result.checked++
 
           // 使用分布式锁防止并发修改
@@ -2922,11 +2936,12 @@ class ClaudeAccountService {
 
             // 重新获取账号数据，确保是最新的
             const latestAccount = await redis.getClaudeAccount(account.id)
-            if (
-              !latestAccount ||
-              latestAccount.fiveHourAutoStopped !== 'true' ||
-              latestAccount.schedulable !== 'false'
-            ) {
+            const latestHasWarningActive = latestAccount?.fiveHourWarningActive === 'true'
+            const latestHasLegacyAutoStop =
+              latestAccount?.fiveHourAutoStopped === 'true' &&
+              latestAccount?.schedulable === 'false'
+
+            if (!latestAccount || (!latestHasWarningActive && !latestHasLegacyAutoStop)) {
               // 账号状态已变化，跳过
               await redis.releaseAccountLock(lockKey, lockValue)
               continue
@@ -2981,10 +2996,22 @@ class ClaudeAccountService {
               // 恢复账号调度
               const updatedAccountData = { ...latestAccount }
 
-              // 恢复调度状态
-              updatedAccountData.schedulable = 'true'
-              delete updatedAccountData.fiveHourAutoStopped
-              delete updatedAccountData.fiveHourStoppedAt
+              // 恢复原始的并发限制（新逻辑）
+              if (updatedAccountData.originalMaxConcurrentTasks !== undefined) {
+                updatedAccountData.maxConcurrentTasks =
+                  updatedAccountData.originalMaxConcurrentTasks
+                delete updatedAccountData.originalMaxConcurrentTasks
+              }
+              // 清除警告激活状态（新逻辑）
+              delete updatedAccountData.fiveHourWarningActive
+              delete updatedAccountData.fiveHourWarningActivatedAt
+
+              // 恢复调度状态（旧逻辑，向后兼容）
+              if (updatedAccountData.fiveHourAutoStopped === 'true') {
+                updatedAccountData.schedulable = 'true'
+                delete updatedAccountData.fiveHourAutoStopped
+                delete updatedAccountData.fiveHourStoppedAt
+              }
               await this._clearFiveHourWarningMetadata(account.id, updatedAccountData)
               delete updatedAccountData.stoppedReason
 
@@ -3001,7 +3028,13 @@ class ClaudeAccountService {
               // 保存更新
               await redis.setClaudeAccount(account.id, updatedAccountData)
 
-              const fieldsToRemove = ['fiveHourAutoStopped', 'fiveHourStoppedAt']
+              const fieldsToRemove = [
+                'fiveHourAutoStopped',
+                'fiveHourStoppedAt',
+                'fiveHourWarningActive',
+                'fiveHourWarningActivatedAt',
+                'originalMaxConcurrentTasks'
+              ]
               if (newWindowStart && newWindowEnd) {
                 fieldsToRemove.push('sessionWindowStatus', 'sessionWindowStatusUpdatedAt')
               }

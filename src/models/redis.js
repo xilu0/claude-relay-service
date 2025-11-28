@@ -2205,6 +2205,38 @@ class RedisClient {
     return await this.getConcurrency(compositeKey)
   }
 
+  // 🏛️ Claude 官方账户并发控制（用于5小时窗口警告时限制并发）
+  // 增加官方账户并发计数
+  async incrClaudeOfficialConcurrency(accountId, requestId, leaseSeconds = null) {
+    if (!requestId) {
+      throw new Error('Request ID is required for Claude official account concurrency tracking')
+    }
+    // 使用特殊的 key 前缀区分官方账户并发
+    const compositeKey = `claude_official:${accountId}`
+    return await this.incrConcurrency(compositeKey, requestId, leaseSeconds)
+  }
+
+  // 刷新官方账户并发租约
+  async refreshClaudeOfficialConcurrencyLease(accountId, requestId, leaseSeconds = null) {
+    if (!requestId) {
+      return 0
+    }
+    const compositeKey = `claude_official:${accountId}`
+    return await this.refreshConcurrencyLease(compositeKey, requestId, leaseSeconds)
+  }
+
+  // 减少官方账户并发计数
+  async decrClaudeOfficialConcurrency(accountId, requestId) {
+    const compositeKey = `claude_official:${accountId}`
+    return await this.decrConcurrency(compositeKey, requestId)
+  }
+
+  // 获取官方账户当前并发数
+  async getClaudeOfficialConcurrency(accountId) {
+    const compositeKey = `claude_official:${accountId}`
+    return await this.getConcurrency(compositeKey)
+  }
+
   // 🔧 Basic Redis operations wrapper methods for convenience
   async get(key) {
     const client = this.getClientSafe()

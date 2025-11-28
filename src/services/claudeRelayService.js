@@ -111,6 +111,10 @@ class ClaudeRelayService {
     options = {}
   ) {
     let upstreamRequest = null
+    // 官方账户并发控制变量
+    let concurrencyAccountId = null
+    let concurrencyRequestId = null
+    let hasConcurrencySlot = false
 
     try {
       // 调试日志：查看API Key数据
@@ -166,6 +170,41 @@ class ClaudeRelayService {
       if (isOpusModelRequest) {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
+      }
+
+      // 官方账户并发控制（用于5小时窗口警告时的并发限制）
+      if (accountType === 'claude-official' && account) {
+        const maxConcurrent = parseInt(account.maxConcurrentTasks || '0', 10)
+        if (maxConcurrent > 0) {
+          concurrencyAccountId = accountId
+          concurrencyRequestId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+          const currentConcurrency = await redis.incrClaudeOfficialConcurrency(
+            concurrencyAccountId,
+            concurrencyRequestId
+          )
+          hasConcurrencySlot = true
+
+          if (currentConcurrency > maxConcurrent) {
+            // 超过并发限制，回滚并返回错误
+            await redis.decrClaudeOfficialConcurrency(concurrencyAccountId, concurrencyRequestId)
+            hasConcurrencySlot = false
+            logger.warn(
+              `🚫 Claude official account ${account.name} (${accountId}) concurrency limit exceeded: ${currentConcurrency}/${maxConcurrent}`
+            )
+            return {
+              statusCode: 503,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: `账户并发限制已达上限（${maxConcurrent}），请稍后重试`
+              }),
+              accountId
+            }
+          }
+          logger.info(
+            `🔒 Acquired concurrency slot for account ${account.name}: ${currentConcurrency}/${maxConcurrent}`
+          )
+        }
       }
 
       const isDedicatedOfficialAccount =
@@ -502,6 +541,19 @@ class ClaudeRelayService {
         error.message
       )
       throw error
+    } finally {
+      // 释放官方账户并发槽位
+      if (hasConcurrencySlot && concurrencyAccountId && concurrencyRequestId) {
+        try {
+          await redis.decrClaudeOfficialConcurrency(concurrencyAccountId, concurrencyRequestId)
+          logger.info(`🔓 Released concurrency slot for account ${concurrencyAccountId}`)
+        } catch (releaseError) {
+          logger.error(
+            `❌ Failed to release concurrency slot for account ${concurrencyAccountId}:`,
+            releaseError
+          )
+        }
+      }
     }
   }
 

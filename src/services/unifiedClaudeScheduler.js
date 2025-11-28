@@ -512,6 +512,18 @@ class UnifiedClaudeScheduler {
           }
         }
 
+        // 检查官方账户的并发限制（用于5小时窗口警告时的并发控制）
+        const maxConcurrent = parseInt(account.maxConcurrentTasks || '0', 10)
+        if (maxConcurrent > 0) {
+          const currentConcurrency = await redis.getClaudeOfficialConcurrency(account.id)
+          if (currentConcurrency >= maxConcurrent) {
+            logger.info(
+              `🚫 Skipping Claude official account ${account.name} (${account.id}) due to concurrency limit: ${currentConcurrency}/${maxConcurrent}`
+            )
+            continue
+          }
+        }
+
         availableAccounts.push({
           ...account,
           accountId: account.id,
