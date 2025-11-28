@@ -2142,22 +2142,6 @@ const expandedApiKeys = ref({})
 // 费用排序相关状态
 const costSortStatus = ref({}) // 各时间范围的索引状态
 
-// 后端分页相关状态
-const serverPagination = ref({
-  page: 1,
-  pageSize: 20,
-  total: 0,
-  totalPages: 0
-})
-
-// 统计数据缓存: Map<keyId, { stats, timeRange, timestamp }>
-const statsCache = ref(new Map())
-// 正在加载统计的 keyIds
-const statsLoading = ref(new Set())
-// 最后使用账号缓存: Map<keyId, lastUsageInfo>
-const lastUsageCache = ref(new Map())
-// 正在加载最后使用账号的 keyIds
-const lastUsageLoading = ref(new Set())
 const apiKeyModelStats = ref({})
 const apiKeyDateFilters = ref({})
 const defaultTime = ref([new Date(2000, 1, 1, 0, 0, 0), new Date(2000, 2, 1, 23, 59, 59)])
