@@ -29,8 +29,12 @@ const fs = require('fs')
 const path = require('path')
 const config = require('../../config/config')
 const ProxyHelper = require('../utils/proxyHelper')
+const apiKeyRegenerateRoutes = require('./admin/apiKeyRegenerate')
 
 const router = express.Router()
+
+// 挂载 API Key 重新生成路由
+router.use('/', apiKeyRegenerateRoutes)
 
 // 🛠️ 工具函数：处理可为空的时间字段
 function normalizeNullableDate(value) {
