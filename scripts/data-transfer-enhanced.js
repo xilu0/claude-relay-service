@@ -207,7 +207,7 @@ async function exportUsageStats(keyId) {
     // 导出模型统计
     // 每日模型统计
     const modelDailyPattern = `usage:${keyId}:model:daily:*`
-    const modelDailyKeys = await redis.client.keys(modelDailyPattern)
+    const modelDailyKeys = await redis.scanKeys(modelDailyPattern)
     for (const key of modelDailyKeys) {
       const match = key.match(/usage:.+:model:daily:(.+):(\d{4}-\d{2}-\d{2})$/)
       if (match) {
@@ -225,7 +225,7 @@ async function exportUsageStats(keyId) {
 
     // 每月模型统计
     const modelMonthlyPattern = `usage:${keyId}:model:monthly:*`
-    const modelMonthlyKeys = await redis.client.keys(modelMonthlyPattern)
+    const modelMonthlyKeys = await redis.scanKeys(modelMonthlyPattern)
     for (const key of modelMonthlyKeys) {
       const match = key.match(/usage:.+:model:monthly:(.+):(\d{4}-\d{2})$/)
       if (match) {
@@ -416,7 +416,7 @@ async function exportData() {
     // 导出 API Keys
     if (types.includes('all') || types.includes('apikeys')) {
       logger.info('📤 Exporting API Keys...')
-      const keys = await redis.client.keys('apikey:*')
+      const keys = await redis.scanKeys('apikey:*')
       const apiKeys = []
 
       for (const key of keys) {
@@ -445,7 +445,7 @@ async function exportData() {
     // 导出 Claude 账户
     if (types.includes('all') || types.includes('accounts')) {
       logger.info('📤 Exporting Claude accounts...')
-      const keys = await redis.client.keys('claude:account:*')
+      const keys = await redis.scanKeys('claude:account:*')
       logger.info(`Found ${keys.length} Claude account keys in Redis`)
       const accounts = []
 
@@ -486,7 +486,7 @@ async function exportData() {
 
       // 导出 Gemini 账户
       logger.info('📤 Exporting Gemini accounts...')
-      const geminiKeys = await redis.client.keys('gemini_account:*')
+      const geminiKeys = await redis.scanKeys('gemini_account:*')
       logger.info(`Found ${geminiKeys.length} Gemini account keys in Redis`)
       const geminiAccounts = []
 
@@ -523,7 +523,7 @@ async function exportData() {
     // 导出管理员
     if (types.includes('all') || types.includes('admins')) {
       logger.info('📤 Exporting admins...')
-      const keys = await redis.client.keys('admin:*')
+      const keys = await redis.scanKeys('admin:*')
       const admins = []
 
       for (const key of keys) {
@@ -552,7 +552,7 @@ async function exportData() {
 
       // 导出全局每日模型统计
       const globalDailyPattern = 'usage:model:daily:*'
-      const globalDailyKeys = await redis.client.keys(globalDailyPattern)
+      const globalDailyKeys = await redis.scanKeys(globalDailyPattern)
       for (const key of globalDailyKeys) {
         const match = key.match(/usage:model:daily:(.+):(\d{4}-\d{2}-\d{2})$/)
         if (match) {
@@ -570,7 +570,7 @@ async function exportData() {
 
       // 导出全局每月模型统计
       const globalMonthlyPattern = 'usage:model:monthly:*'
-      const globalMonthlyKeys = await redis.client.keys(globalMonthlyPattern)
+      const globalMonthlyKeys = await redis.scanKeys(globalMonthlyPattern)
       for (const key of globalMonthlyKeys) {
         const match = key.match(/usage:model:monthly:(.+):(\d{4}-\d{2})$/)
         if (match) {
@@ -588,7 +588,7 @@ async function exportData() {
 
       // 导出全局每小时模型统计
       const globalHourlyPattern = 'usage:model:hourly:*'
-      const globalHourlyKeys = await redis.client.keys(globalHourlyPattern)
+      const globalHourlyKeys = await redis.scanKeys(globalHourlyPattern)
       for (const key of globalHourlyKeys) {
         const match = key.match(/usage:model:hourly:(.+):(\d{4}-\d{2}-\d{2}:\d{2})$/)
         if (match) {

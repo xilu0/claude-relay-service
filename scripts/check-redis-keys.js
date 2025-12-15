@@ -11,8 +11,8 @@ async function checkRedisKeys() {
     // 确保 Redis 已连接
     await redis.connect()
 
-    // 获取所有键
-    const allKeys = await redis.client.keys('*')
+    // 获取所有键（使用 scanKeys 兼容 AWS Valkey）
+    const allKeys = await redis.scanKeys('*')
     console.log(`找到 ${allKeys.length} 个键\n`)
 
     // 按类型分组

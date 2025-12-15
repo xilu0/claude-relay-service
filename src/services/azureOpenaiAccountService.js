@@ -280,7 +280,7 @@ async function deleteAccount(accountId) {
 // 获取所有账户
 async function getAllAccounts() {
   const client = redisClient.getClientSafe()
-  const keys = await client.keys(`${AZURE_OPENAI_ACCOUNT_KEY_PREFIX}*`)
+  const keys = await redisClient.scanKeys(`${AZURE_OPENAI_ACCOUNT_KEY_PREFIX}*`)
 
   if (!keys || keys.length === 0) {
     return []

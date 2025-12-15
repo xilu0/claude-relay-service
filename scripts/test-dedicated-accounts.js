@@ -11,8 +11,8 @@ async function testDedicatedAccounts() {
     // 确保 Redis 已连接
     await redis.connect()
 
-    // 获取所有 Claude 账号
-    const claudeKeys = await redis.client.keys('claude:account:*')
+    // 获取所有 Claude 账号（使用 scanKeys 兼容 AWS Valkey）
+    const claudeKeys = await redis.scanKeys('claude:account:*')
     console.log(`找到 ${claudeKeys.length} 个 Claude 账号\n`)
 
     const dedicatedAccounts = []
@@ -67,8 +67,8 @@ async function testDedicatedAccounts() {
       console.log('')
     }
 
-    // 检查分组
-    const groupKeys = await redis.client.keys('account_group:*')
+    // 检查分组（使用 scanKeys 兼容 AWS Valkey）
+    const groupKeys = await redis.scanKeys('account_group:*')
     console.log(`\n找到 ${groupKeys.length} 个账号分组`)
 
     if (groupKeys.length > 0) {
@@ -81,8 +81,8 @@ async function testDedicatedAccounts() {
       }
     }
 
-    // 检查 Claude Console 账号
-    const consoleKeys = await redis.client.keys('claude_console_account:*')
+    // 检查 Claude Console 账号（使用 scanKeys 兼容 AWS Valkey）
+    const consoleKeys = await redis.scanKeys('claude_console_account:*')
     console.log(`\n找到 ${consoleKeys.length} 个 Claude Console 账号`)
 
     const dedicatedConsoleAccounts = []

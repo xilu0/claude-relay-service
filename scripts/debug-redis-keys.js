@@ -14,8 +14,8 @@ async function debugRedisKeys() {
     await redis.connect()
     logger.success('✅ Connected to Redis')
 
-    // 获取所有键
-    const allKeys = await redis.client.keys('*')
+    // 获取所有键（使用 scanKeys 兼容 AWS Valkey）
+    const allKeys = await redis.scanKeys('*')
     logger.info(`\n📊 Total keys in Redis: ${allKeys.length}\n`)
 
     // 按类型分组

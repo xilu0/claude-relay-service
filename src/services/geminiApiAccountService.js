@@ -223,7 +223,7 @@ class GeminiApiAccountService {
     }
 
     // 直接从 Redis 获取所有账户（包括非共享账户）
-    const keys = await client.keys(`${this.ACCOUNT_KEY_PREFIX}*`)
+    const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
     for (const key of keys) {
       const accountId = key.replace(this.ACCOUNT_KEY_PREFIX, '')
       if (!accountIds.includes(accountId)) {

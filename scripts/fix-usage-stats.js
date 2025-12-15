@@ -46,7 +46,7 @@ async function fixUsageStats() {
     // 1. 修复 API Key 级别的总统计
     logger.info('\n📊 修复 API Key 总统计数据...')
     const apiKeyPattern = 'apikey:*'
-    const apiKeys = await client.keys(apiKeyPattern)
+    const apiKeys = await redis.scanKeys(apiKeyPattern)
     stats.totalKeys = apiKeys.length
 
     for (const apiKeyKey of apiKeys) {
@@ -83,7 +83,7 @@ async function fixUsageStats() {
     // 2. 修复每日统计数据
     logger.info('\n📅 修复每日统计数据...')
     const dailyPattern = 'usage:daily:*'
-    const dailyKeys = await client.keys(dailyPattern)
+    const dailyKeys = await redis.scanKeys(dailyPattern)
 
     for (const dailyKey of dailyKeys) {
       try {
@@ -113,7 +113,7 @@ async function fixUsageStats() {
     // 3. 修复每月统计数据
     logger.info('\n📆 修复每月统计数据...')
     const monthlyPattern = 'usage:monthly:*'
-    const monthlyKeys = await client.keys(monthlyPattern)
+    const monthlyKeys = await redis.scanKeys(monthlyPattern)
 
     for (const monthlyKey of monthlyKeys) {
       try {
@@ -150,7 +150,7 @@ async function fixUsageStats() {
     ]
 
     for (const pattern of modelPatterns) {
-      const modelKeys = await client.keys(pattern)
+      const modelKeys = await redis.scanKeys(pattern)
 
       for (const modelKey of modelKeys) {
         try {
