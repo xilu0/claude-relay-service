@@ -1683,6 +1683,57 @@ class RedisClient {
     await pipeline.exec()
   }
 
+  /**
+   * 清理账号相关的所有使用统计数据
+   * 在删除账号时调用，防止产生孤立数据
+   * @param {string} accountId - 账号 ID
+   */
+  async cleanupAccountUsageData(accountId) {
+    const client = this.getClientSafe()
+
+    // 需要清理的数据模式
+    const patterns = [
+      `account_usage:${accountId}`,
+      `account_usage:daily:${accountId}:*`,
+      `account_usage:monthly:${accountId}:*`,
+      `account_usage:hourly:${accountId}:*`,
+      `account_usage:model:daily:${accountId}:*`,
+      `account_usage:model:monthly:${accountId}:*`,
+      `account_usage:model:hourly:${accountId}:*`,
+    ]
+
+    // 其他关联数据
+    const directKeys = [`account:overload:${accountId}`, `concurrency:${accountId}`]
+
+    let deletedCount = 0
+
+    // 删除直接键
+    for (const key of directKeys) {
+      const result = await client.del(key)
+      deletedCount += result
+    }
+
+    // 删除模式匹配的键
+    for (const pattern of patterns) {
+      if (pattern.includes('*')) {
+        const keys = await this.scanKeys(pattern)
+        if (keys.length > 0) {
+          const result = await client.del(...keys)
+          deletedCount += result
+        }
+      } else {
+        const result = await client.del(pattern)
+        deletedCount += result
+      }
+    }
+
+    if (deletedCount > 0) {
+      logger.info(`[cleanupAccountUsageData] 已清理账号 ${accountId} 的 ${deletedCount} 个关联数据`)
+    }
+
+    return deletedCount
+  }
+
   // 🤖 Droid 账户相关操作
   async setDroidAccount(accountId, accountData) {
     const key = `droid:account:${accountId}`

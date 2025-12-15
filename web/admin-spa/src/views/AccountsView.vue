@@ -2620,14 +2620,15 @@ const clearSearch = () => {
   currentPage.value = 1
 }
 
-// 加载API Keys列表（缓存版本）
+// 加载API Keys列表（缓存版本，使用轻量级端点）
 const loadApiKeys = async (forceReload = false) => {
   if (!forceReload && apiKeysLoaded.value) {
     return // 使用缓存数据
   }
 
   try {
-    const response = await apiClient.get('/admin/api-keys')
+    // 🚀 使用轻量级端点，只获取基本信息，不计算统计数据
+    const response = await apiClient.get('/admin/api-keys/basic')
     if (response.success) {
       apiKeys.value = response.data || []
       apiKeysLoaded.value = true

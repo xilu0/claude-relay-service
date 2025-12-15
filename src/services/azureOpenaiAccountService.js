@@ -273,6 +273,9 @@ async function deleteAccount(accountId) {
   // 从共享账户集合中移除
   await client.srem(SHARED_AZURE_OPENAI_ACCOUNTS_KEY, accountId)
 
+  // 清理账号相关的使用统计数据，防止产生孤立数据
+  await redisClient.cleanupAccountUsageData(accountId)
+
   logger.info(`Deleted Azure OpenAI account: ${accountId}`)
   return true
 }

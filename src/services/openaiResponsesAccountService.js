@@ -183,6 +183,9 @@ class OpenAIResponsesAccountService {
     // 删除账户数据
     await client.del(key)
 
+    // 清理账号相关的使用统计数据，防止产生孤立数据
+    await redis.cleanupAccountUsageData(accountId)
+
     logger.info(`🗑️ Deleted OpenAI-Responses account: ${accountId}`)
 
     return { success: true }
