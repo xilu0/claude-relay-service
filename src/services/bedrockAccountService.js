@@ -281,6 +281,9 @@ class BedrockAccountService {
       const client = redis.getClientSafe()
       await client.del(`bedrock_account:${accountId}`)
 
+      // 清理账号相关的使用统计数据，防止产生孤立数据
+      await redis.cleanupAccountUsageData(accountId)
+
       logger.info(`✅ 删除Bedrock账户成功 - ID: ${accountId}`)
 
       return { success: true }

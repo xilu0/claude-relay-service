@@ -194,6 +194,41 @@ router.get('/api-keys/:keyId/cost-debug', authenticateAdmin, async (req, res) =>
   }
 })
 
+// 🚀 获取API Keys基本信息（轻量级，用于AccountsView等场景）
+router.get('/api-keys/basic', authenticateAdmin, async (req, res) => {
+  try {
+    // 只获取基本信息，不计算统计数据
+    const apiKeys = await apiKeyService.getAllApiKeys()
+
+    // 只返回必要字段，不包含统计数据
+    const basicKeys = apiKeys
+      .filter((key) => key.isDeleted !== 'true')
+      .map((key) => ({
+        id: key.id,
+        name: key.name,
+        boundAccountId: key.boundAccountId,
+        boundGeminiAccountId: key.boundGeminiAccountId,
+        boundOpenaiAccountId: key.boundOpenaiAccountId,
+        boundDroidAccountId: key.boundDroidAccountId,
+        isActive: key.isActive,
+        permissions: key.permissions || 'all',
+        tags: key.tags || []
+      }))
+
+    res.json({
+      success: true,
+      data: basicKeys
+    })
+  } catch (error) {
+    logger.error('❌ Failed to get basic API keys:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get API keys',
+      message: error.message
+    })
+  }
+})
+
 // 获取所有API Keys
 router.get('/api-keys', authenticateAdmin, async (req, res) => {
   try {

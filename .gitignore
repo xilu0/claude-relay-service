@@ -247,4 +247,4 @@ web/apiStats/
 # Admin SPA build files
 web/admin-spa/dist/
 scripts/test-api-key-query.js
-docs/openapi/claude-relay-service-auth.json
+docs

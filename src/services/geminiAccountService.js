@@ -638,6 +638,9 @@ async function deleteAccount(accountId) {
     }
   }
 
+  // 清理账号相关的使用统计数据，防止产生孤立数据
+  await redisClient.cleanupAccountUsageData(accountId)
+
   logger.info(`Deleted Gemini account: ${accountId}`)
   return true
 }

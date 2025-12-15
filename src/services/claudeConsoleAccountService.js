@@ -439,6 +439,9 @@ class ClaudeConsoleAccountService {
         await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
       }
 
+      // 清理账号相关的使用统计数据，防止产生孤立数据
+      await redis.cleanupAccountUsageData(accountId)
+
       logger.success(`🗑️ Deleted Claude Console account: ${accountId}`)
 
       return { success: true }
