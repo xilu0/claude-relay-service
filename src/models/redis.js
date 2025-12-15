@@ -126,15 +126,16 @@ class RedisClient {
    * 使用 SCAN 替代 KEYS 命令（兼容 AWS Valkey）
    * KEYS 命令在 AWS Valkey 中被禁用，SCAN 是官方推荐的替代方案
    * @param {string} pattern - 匹配模式，如 'apikey:*'
+   * @param {number} count - 每次扫描的数量，默认 1000（增大以减少网络往返）
    * @returns {Promise<string[]>} - 匹配的 key 数组
    */
-  async scanKeys(pattern) {
+  async scanKeys(pattern, count = 1000) {
     const client = this.getClientSafe()
     const keys = []
     let cursor = '0'
 
     do {
-      const [nextCursor, batch] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
+      const [nextCursor, batch] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', count)
       cursor = nextCursor
       keys.push(...batch)
     } while (cursor !== '0')
@@ -1463,9 +1464,17 @@ class RedisClient {
   }
 
   // 🏢 Claude 账户管理
+  // 索引 Set 键名
+  static CLAUDE_ACCOUNT_INDEX = 'claude:account:_index'
+
   async setClaudeAccount(accountId, accountData) {
     const key = `claude:account:${accountId}`
-    await this.client.hset(key, accountData)
+    const client = this.getClientSafe()
+    // 使用 pipeline 原子性更新账户数据和索引
+    const pipeline = client.pipeline()
+    pipeline.hset(key, accountData)
+    pipeline.sadd(RedisClient.CLAUDE_ACCOUNT_INDEX, accountId)
+    await pipeline.exec()
   }
 
   async getClaudeAccount(accountId) {
@@ -1474,20 +1483,52 @@ class RedisClient {
   }
 
   async getAllClaudeAccounts() {
-    const keys = await this.scanKeys('claude:account:*')
-    const accounts = []
-    for (const key of keys) {
-      const accountData = await this.client.hgetall(key)
-      if (accountData && Object.keys(accountData).length > 0) {
-        accounts.push({ id: key.replace('claude:account:', ''), ...accountData })
+    const client = this.getClientSafe()
+
+    // 优先使用索引 Set（O(1) 获取所有账户 ID）
+    let accountIds = await client.smembers(RedisClient.CLAUDE_ACCOUNT_INDEX)
+
+    // 如果索引为空，回退到 SCAN 并重建索引
+    if (!accountIds || accountIds.length === 0) {
+      const keys = await this.scanKeys('claude:account:*')
+      accountIds = keys
+        .filter((k) => k !== RedisClient.CLAUDE_ACCOUNT_INDEX)
+        .map((k) => k.replace('claude:account:', ''))
+
+      // 重建索引（如果有账户的话）
+      if (accountIds.length > 0) {
+        await client.sadd(RedisClient.CLAUDE_ACCOUNT_INDEX, ...accountIds)
       }
     }
+
+    // 批量获取账户数据
+    const accounts = []
+    if (accountIds.length > 0) {
+      const pipeline = client.pipeline()
+      for (const id of accountIds) {
+        pipeline.hgetall(`claude:account:${id}`)
+      }
+      const results = await pipeline.exec()
+
+      for (let i = 0; i < accountIds.length; i++) {
+        const [err, accountData] = results[i]
+        if (!err && accountData && Object.keys(accountData).length > 0) {
+          accounts.push({ id: accountIds[i], ...accountData })
+        }
+      }
+    }
+
     return accounts
   }
 
   async deleteClaudeAccount(accountId) {
     const key = `claude:account:${accountId}`
-    return await this.client.del(key)
+    const client = this.getClientSafe()
+    // 使用 pipeline 原子性删除账户数据和索引
+    const pipeline = client.pipeline()
+    pipeline.del(key)
+    pipeline.srem(RedisClient.CLAUDE_ACCOUNT_INDEX, accountId)
+    await pipeline.exec()
   }
 
   // 🤖 Droid 账户相关操作
