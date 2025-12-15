@@ -271,6 +271,10 @@ class RedisClient {
     const keyModelMonthly = `usage:${keyId}:model:monthly:${normalizedModel}:${currentMonth}`
     const keyModelHourly = `usage:${keyId}:model:hourly:${normalizedModel}:${currentHour}` // 新增API Key模型小时级别
 
+    // 模型索引键（用于快速查找该 API Key 使用过哪些模型，避免 SCAN）
+    const keyModelsIndex = `usage:${keyId}:models`
+    const keyModelsMonthlyIndex = `usage:${keyId}:models:${currentMonth}`
+
     // 新增：系统级分钟统计
     const minuteTimestamp = Math.floor(now.getTime() / 60000)
     const systemMinuteKey = `system:metrics:minute:${minuteTimestamp}`
@@ -404,6 +408,10 @@ class RedisClient {
     pipeline.hincrby(keyModelHourly, 'allTokens', totalTokens)
     pipeline.hincrby(keyModelHourly, 'requests', 1)
 
+    // 维护模型索引（用于快速查找，避免 SCAN）
+    pipeline.sadd(keyModelsIndex, normalizedModel)
+    pipeline.sadd(keyModelsMonthlyIndex, normalizedModel)
+
     // 新增：系统级分钟统计
     pipeline.hincrby(systemMinuteKey, 'requests', 1)
     pipeline.hincrby(systemMinuteKey, 'totalTokens', totalTokens)
@@ -422,6 +430,9 @@ class RedisClient {
     pipeline.expire(keyModelDaily, 86400 * 32) // API Key模型每日统计32天过期
     pipeline.expire(keyModelMonthly, 86400 * 365) // API Key模型每月统计1年过期
     pipeline.expire(keyModelHourly, 86400 * 7) // API Key模型小时统计7天过期
+    // 模型索引过期时间
+    pipeline.expire(keyModelsIndex, 86400 * 365) // 总模型索引1年过期
+    pipeline.expire(keyModelsMonthlyIndex, 86400 * 365) // 月度模型索引1年过期
 
     // 系统级分钟统计的过期时间（窗口时间的2倍）
     const configLocal = require('../../config/config')
@@ -430,6 +441,147 @@ class RedisClient {
 
     // 执行Pipeline
     await pipeline.exec()
+  }
+
+  /**
+   * 获取 API Key 使用过的模型列表（使用索引，避免 SCAN）
+   * @param {string} keyId - API Key ID
+   * @param {string} month - 可选，指定月份（格式：YYYY-MM），不指定则返回所有使用过的模型
+   * @returns {Promise<string[]>} - 模型名称数组
+   */
+  async getApiKeyModels(keyId, month = null) {
+    const client = this.getClientSafe()
+    const indexKey = month ? `usage:${keyId}:models:${month}` : `usage:${keyId}:models`
+
+    // 优先使用索引
+    let models = await client.smembers(indexKey)
+
+    // 如果索引为空，回退到 SCAN 并重建索引（兼容旧数据）
+    if (!models || models.length === 0) {
+      const pattern = month
+        ? `usage:${keyId}:model:monthly:*:${month}`
+        : `usage:${keyId}:model:monthly:*:*`
+      const keys = await this.scanKeys(pattern)
+
+      models = keys
+        .map((k) => {
+          const match = k.match(/usage:.+:model:monthly:(.+):\d{4}-\d{2}$/)
+          return match ? match[1] : null
+        })
+        .filter((m) => m !== null)
+
+      // 去重
+      models = [...new Set(models)]
+
+      // 重建索引
+      if (models.length > 0) {
+        await client.sadd(indexKey, ...models)
+        await client.expire(indexKey, 86400 * 365) // 1年过期
+      }
+    }
+
+    return models
+  }
+
+  /**
+   * 批量获取 API Key 的模型使用统计（使用索引优化）
+   * @param {string} keyId - API Key ID
+   * @param {string} period - 统计周期：'daily' | 'monthly' | 'all'
+   * @param {string} timeKey - 时间键（daily 为日期，monthly 为月份）
+   * @returns {Promise<Map>} - 模型统计数据 Map
+   */
+  async getApiKeyModelStats(keyId, period = 'monthly', timeKey = null) {
+    const client = this.getClientSafe()
+
+    // 获取当前时间信息
+    const now = new Date()
+    const tzDate = getDateInTimezone(now)
+    const currentMonth = `${tzDate.getUTCFullYear()}-${String(tzDate.getUTCMonth() + 1).padStart(2, '0')}`
+
+    // 确定使用哪个索引获取模型列表
+    const monthForIndex = period === 'monthly' && timeKey ? timeKey : null
+    const models = await this.getApiKeyModels(keyId, monthForIndex)
+
+    if (models.length === 0) {
+      return new Map()
+    }
+
+    // 批量获取模型统计数据
+    const pipeline = client.pipeline()
+    const modelStatsMap = new Map()
+
+    if (period === 'all') {
+      // 获取所有月份的数据
+      // 先获取所有月份的索引
+      const monthsKeys = await this.scanKeys(`usage:${keyId}:models:*`)
+      const months = monthsKeys
+        .map((k) => k.replace(`usage:${keyId}:models:`, ''))
+        .filter((m) => /^\d{4}-\d{2}$/.test(m))
+
+      // 添加当前月份确保不遗漏
+      if (!months.includes(currentMonth)) {
+        months.push(currentMonth)
+      }
+
+      // 为每个模型和月份组合构建键
+      for (const model of models) {
+        for (const month of months) {
+          pipeline.hgetall(`usage:${keyId}:model:monthly:${model}:${month}`)
+        }
+      }
+
+      const results = await pipeline.exec()
+      let resultIndex = 0
+
+      for (const model of models) {
+        for (let i = 0; i < months.length; i++) {
+          const [err, data] = results[resultIndex++]
+          if (!err && data && Object.keys(data).length > 0) {
+            if (!modelStatsMap.has(model)) {
+              modelStatsMap.set(model, {
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheCreateTokens: 0,
+                cacheReadTokens: 0,
+                requests: 0
+              })
+            }
+            const stats = modelStatsMap.get(model)
+            stats.inputTokens += parseInt(data.inputTokens || data.totalInputTokens) || 0
+            stats.outputTokens += parseInt(data.outputTokens || data.totalOutputTokens) || 0
+            stats.cacheCreateTokens +=
+              parseInt(data.cacheCreateTokens || data.totalCacheCreateTokens) || 0
+            stats.cacheReadTokens +=
+              parseInt(data.cacheReadTokens || data.totalCacheReadTokens) || 0
+            stats.requests += parseInt(data.requests) || 0
+          }
+        }
+      }
+    } else {
+      // 单个时间周期
+      const keyTime = timeKey || (period === 'daily' ? getDateStringInTimezone(now) : currentMonth)
+
+      for (const model of models) {
+        pipeline.hgetall(`usage:${keyId}:model:${period}:${model}:${keyTime}`)
+      }
+
+      const results = await pipeline.exec()
+
+      for (let i = 0; i < models.length; i++) {
+        const [err, data] = results[i]
+        if (!err && data && Object.keys(data).length > 0) {
+          modelStatsMap.set(models[i], {
+            inputTokens: parseInt(data.inputTokens || data.totalInputTokens) || 0,
+            outputTokens: parseInt(data.outputTokens || data.totalOutputTokens) || 0,
+            cacheCreateTokens: parseInt(data.cacheCreateTokens || data.totalCacheCreateTokens) || 0,
+            cacheReadTokens: parseInt(data.cacheReadTokens || data.totalCacheReadTokens) || 0,
+            requests: parseInt(data.requests) || 0
+          })
+        }
+      }
+    }
+
+    return modelStatsMap
   }
 
   // 📊 记录账户级别的使用统计
