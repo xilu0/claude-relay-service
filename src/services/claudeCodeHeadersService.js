@@ -197,7 +197,7 @@ class ClaudeCodeHeadersService {
   async getAllAccountHeaders() {
     try {
       const pattern = 'claude_code_headers:*'
-      const keys = await redis.getClient().keys(pattern)
+      const keys = await redis.scanKeys(pattern)
 
       const results = {}
       for (const key of keys) {

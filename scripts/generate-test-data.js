@@ -159,7 +159,7 @@ async function cleanTestData() {
     ]
 
     for (const pattern of patterns) {
-      const keys = await client.keys(pattern)
+      const keys = await redis.scanKeys(pattern)
       if (keys.length > 0) {
         await client.del(...keys)
         logger.info(`🗑️ Deleted ${keys.length} keys matching pattern: ${pattern}`)
@@ -175,7 +175,7 @@ async function cleanTestData() {
   const modelPatterns = ['usage:model:daily:*', 'usage:model:monthly:*']
 
   for (const pattern of modelPatterns) {
-    const keys = await client.keys(pattern)
+    const keys = await redis.scanKeys(pattern)
     if (keys.length > 0) {
       await client.del(...keys)
       logger.info(`🗑️ Deleted ${keys.length} keys matching pattern: ${pattern}`)

@@ -127,7 +127,7 @@ class BedrockAccountService {
   async getAllAccounts() {
     try {
       const client = redis.getClientSafe()
-      const keys = await client.keys('bedrock_account:*')
+      const keys = await redis.scanKeys('bedrock_account:*')
       const accounts = []
 
       for (const key of keys) {

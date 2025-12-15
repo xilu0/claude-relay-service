@@ -219,7 +219,9 @@ class ApiKeyService {
 
       if (!keyData) {
         // ⚠️ 警告：映射表查找失败，可能是竞态条件或映射表损坏
-        logger.warn(`⚠️ API key not found in hash map: ${hashedKey.substring(0, 16)}... (possible race condition or corrupted hash map)`)
+        logger.warn(
+          `⚠️ API key not found in hash map: ${hashedKey.substring(0, 16)}... (possible race condition or corrupted hash map)`
+        )
         return { valid: false, error: 'API key not found' }
       }
 
@@ -1214,7 +1216,7 @@ class ApiKeyService {
       await redis.client.del(`usage:monthly:${currentMonth}:${keyId}`)
 
       // 删除所有相关的统计键（通过模式匹配）
-      const usageKeys = await redis.client.keys(`usage:*:${keyId}*`)
+      const usageKeys = await redis.scanKeys(`usage:*:${keyId}*`)
       if (usageKeys.length > 0) {
         await redis.client.del(...usageKeys)
       }

@@ -122,6 +122,26 @@ class RedisClient {
     return this.client
   }
 
+  /**
+   * 使用 SCAN 替代 KEYS 命令（兼容 AWS Valkey）
+   * KEYS 命令在 AWS Valkey 中被禁用，SCAN 是官方推荐的替代方案
+   * @param {string} pattern - 匹配模式，如 'apikey:*'
+   * @returns {Promise<string[]>} - 匹配的 key 数组
+   */
+  async scanKeys(pattern) {
+    const client = this.getClientSafe()
+    const keys = []
+    let cursor = '0'
+
+    do {
+      const [nextCursor, batch] = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 100)
+      cursor = nextCursor
+      keys.push(...batch)
+    } while (cursor !== '0')
+
+    return keys
+  }
+
   // 🔑 API Key 相关操作
   async setApiKey(keyId, keyData, hashedKey = null) {
     const key = `apikey:${keyId}`
@@ -156,7 +176,7 @@ class RedisClient {
   }
 
   async getAllApiKeys() {
-    const keys = await this.client.keys('apikey:*')
+    const keys = await this.scanKeys('apikey:*')
     const apiKeys = []
     for (const key of keys) {
       // 过滤掉hash_map，它不是真正的API Key
@@ -745,7 +765,7 @@ class RedisClient {
     return dataPoints.sort((a, b) => a.timestamp - b.timestamp)
   }
 
-  async addUsageRecord(keyId, record, maxRecords = 200) {
+  async addUsageRecord(keyId, record, maxRecords = 20000) {
     const listKey = `usage:records:${keyId}`
     const client = this.getClientSafe()
 
@@ -1197,7 +1217,7 @@ class RedisClient {
 
     // 获取账户今日所有模型的使用数据
     const pattern = `account_usage:model:daily:${accountId}:*:${today}`
-    const modelKeys = await this.client.keys(pattern)
+    const modelKeys = await this.scanKeys(pattern)
 
     if (!modelKeys || modelKeys.length === 0) {
       return 0
@@ -1344,7 +1364,7 @@ class RedisClient {
   async getAllAccountsUsageStats() {
     try {
       // 获取所有Claude账户
-      const accountKeys = await this.client.keys('claude_account:*')
+      const accountKeys = await this.scanKeys('claude_account:*')
       const accountStats = []
 
       for (const accountKey of accountKeys) {
@@ -1387,7 +1407,7 @@ class RedisClient {
     try {
       // 获取所有API Key ID
       const apiKeyIds = []
-      const apiKeyKeys = await client.keys('apikey:*')
+      const apiKeyKeys = await this.scanKeys('apikey:*')
 
       for (const key of apiKeyKeys) {
         if (key === 'apikey:hash_map') {
@@ -1407,14 +1427,14 @@ class RedisClient {
         }
 
         // 删除该API Key的每日统计（使用精确的keyId匹配）
-        const dailyKeys = await client.keys(`usage:daily:${keyId}:*`)
+        const dailyKeys = await this.scanKeys(`usage:daily:${keyId}:*`)
         if (dailyKeys.length > 0) {
           await client.del(...dailyKeys)
           stats.deletedDailyKeys += dailyKeys.length
         }
 
         // 删除该API Key的每月统计（使用精确的keyId匹配）
-        const monthlyKeys = await client.keys(`usage:monthly:${keyId}:*`)
+        const monthlyKeys = await this.scanKeys(`usage:monthly:${keyId}:*`)
         if (monthlyKeys.length > 0) {
           await client.del(...monthlyKeys)
           stats.deletedMonthlyKeys += monthlyKeys.length
@@ -1430,7 +1450,7 @@ class RedisClient {
       }
 
       // 额外清理：删除所有可能遗漏的usage相关键
-      const allUsageKeys = await client.keys('usage:*')
+      const allUsageKeys = await this.scanKeys('usage:*')
       if (allUsageKeys.length > 0) {
         await client.del(...allUsageKeys)
         stats.deletedKeys += allUsageKeys.length
@@ -1454,7 +1474,7 @@ class RedisClient {
   }
 
   async getAllClaudeAccounts() {
-    const keys = await this.client.keys('claude:account:*')
+    const keys = await this.scanKeys('claude:account:*')
     const accounts = []
     for (const key of keys) {
       const accountData = await this.client.hgetall(key)
@@ -1482,7 +1502,7 @@ class RedisClient {
   }
 
   async getAllDroidAccounts() {
-    const keys = await this.client.keys('droid:account:*')
+    const keys = await this.scanKeys('droid:account:*')
     const accounts = []
     for (const key of keys) {
       const accountData = await this.client.hgetall(key)
@@ -1512,7 +1532,7 @@ class RedisClient {
   }
 
   async getAllOpenAIAccounts() {
-    const keys = await this.client.keys('openai:account:*')
+    const keys = await this.scanKeys('openai:account:*')
     const accounts = []
     for (const key of keys) {
       const accountData = await this.client.hgetall(key)
@@ -1603,9 +1623,9 @@ class RedisClient {
   // 📈 系统统计
   async getSystemStats() {
     const keys = await Promise.all([
-      this.client.keys('apikey:*'),
-      this.client.keys('claude:account:*'),
-      this.client.keys('usage:*')
+      this.scanKeys('apikey:*'),
+      this.scanKeys('claude:account:*'),
+      this.scanKeys('usage:*')
     ])
 
     return {
@@ -1619,7 +1639,7 @@ class RedisClient {
   async getTodayStats() {
     try {
       const today = getDateStringInTimezone()
-      const dailyKeys = await this.client.keys(`usage:daily:*:${today}`)
+      const dailyKeys = await this.scanKeys(`usage:daily:*:${today}`)
 
       let totalRequestsToday = 0
       let totalTokensToday = 0
@@ -1667,7 +1687,7 @@ class RedisClient {
       }
 
       // 获取今日创建的API Key数量（批量优化）
-      const allApiKeys = await this.client.keys('apikey:*')
+      const allApiKeys = await this.scanKeys('apikey:*')
       let apiKeysCreatedToday = 0
 
       if (allApiKeys.length > 0) {
@@ -1708,7 +1728,7 @@ class RedisClient {
   // 📈 获取系统总的平均RPM和TPM
   async getSystemAverages() {
     try {
-      const allApiKeys = await this.client.keys('apikey:*')
+      const allApiKeys = await this.scanKeys('apikey:*')
       let totalRequests = 0
       let totalTokens = 0
       let totalInputTokens = 0
@@ -1946,7 +1966,7 @@ class RedisClient {
       const patterns = ['usage:daily:*', 'ratelimit:*', 'session:*', 'sticky_session:*', 'oauth:*']
 
       for (const pattern of patterns) {
-        const keys = await this.client.keys(pattern)
+        const keys = await this.scanKeys(pattern)
         const pipeline = this.client.pipeline()
 
         for (const key of keys) {
@@ -2227,8 +2247,8 @@ class RedisClient {
   }
 
   async keys(pattern) {
-    const client = this.getClientSafe()
-    return await client.keys(pattern)
+    // 使用 scanKeys 替代 KEYS 命令（兼容 AWS Valkey）
+    return await this.scanKeys(pattern)
   }
 
   // 📊 获取账户会话窗口内的使用统计（包含模型细分）

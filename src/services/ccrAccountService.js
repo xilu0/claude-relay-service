@@ -140,7 +140,7 @@ class CcrAccountService {
   async getAllAccounts() {
     try {
       const client = redis.getClientSafe()
-      const keys = await client.keys(`${this.ACCOUNT_KEY_PREFIX}*`)
+      const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
       const accounts = []
 
       for (const key of keys) {

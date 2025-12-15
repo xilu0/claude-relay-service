@@ -311,7 +311,7 @@ async function exportData() {
     // 导出 API Keys
     if (types.includes('all') || types.includes('apikeys')) {
       logger.info('📤 Exporting API Keys...')
-      const keys = await redis.client.keys('apikey:*')
+      const keys = await redis.scanKeys('apikey:*')
       const apiKeys = []
 
       for (const key of keys) {
@@ -335,7 +335,7 @@ async function exportData() {
     if (types.includes('all') || types.includes('accounts')) {
       logger.info('📤 Exporting Claude accounts...')
       // 注意：Claude 账户使用 claude:account: 前缀，不是 claude_account:
-      const keys = await redis.client.keys('claude:account:*')
+      const keys = await redis.scanKeys('claude:account:*')
       logger.info(`Found ${keys.length} Claude account keys in Redis`)
       const accounts = []
 
@@ -361,7 +361,7 @@ async function exportData() {
 
       // 导出 Gemini 账户
       logger.info('📤 Exporting Gemini accounts...')
-      const geminiKeys = await redis.client.keys('gemini_account:*')
+      const geminiKeys = await redis.scanKeys('gemini_account:*')
       logger.info(`Found ${geminiKeys.length} Gemini account keys in Redis`)
       const geminiAccounts = []
 
@@ -381,7 +381,7 @@ async function exportData() {
     // 导出管理员
     if (types.includes('all') || types.includes('admins')) {
       logger.info('📤 Exporting admins...')
-      const keys = await redis.client.keys('admin:*')
+      const keys = await redis.scanKeys('admin:*')
       const admins = []
 
       for (const key of keys) {
