@@ -3,9 +3,24 @@ import { ref, computed } from 'vue'
 import { apiClient } from '@/config/api'
 import { showToast } from '@/utils/toast'
 
+// 模块级变量，确保在所有 store 实例间共享，不受响应式系统影响
+let _dashboardInitialized = false
+let _dashboardInitializing = false
+let _loadDashboardDataPromise = null // 用于防止 loadDashboardData 重复调用
+
+// 仅开发环境输出调试日志
+const DEBUG = import.meta.env.DEV
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log('[Dashboard]', ...args)
+  }
+}
+
 export const useDashboardStore = defineStore('dashboard', () => {
   // 状态
   const loading = ref(false)
+  const initialized = ref(false)
+  const initializing = ref(false)
   const dashboardData = ref({
     totalApiKeys: 0,
     activeApiKeys: 0,
@@ -140,96 +155,111 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   // 方法
   async function loadDashboardData(timeRange = null) {
+    // 如果已经有一个正在进行的请求，返回该 Promise（防重）
+    if (_loadDashboardDataPromise) {
+      debugLog('loadDashboardData: 复用已有请求')
+      return _loadDashboardDataPromise
+    }
+
+    debugLog('loadDashboardData: 开始新请求')
     loading.value = true
-    try {
-      // 根据timeRange动态设置costs查询参数
-      let costsParams = { today: 'today', all: 'all' }
 
-      if (timeRange) {
-        const periodMapping = {
-          today: { today: 'today', all: 'today' },
-          '7days': { today: '7days', all: '7days' },
-          monthly: { today: 'monthly', all: 'monthly' },
-          all: { today: 'today', all: 'all' }
+    // 创建新的 Promise 并存储
+    _loadDashboardDataPromise = (async () => {
+      try {
+        // 根据timeRange动态设置costs查询参数
+        let costsParams = { today: 'today', all: 'all' }
+
+        if (timeRange) {
+          const periodMapping = {
+            today: { today: 'today', all: 'today' },
+            '7days': { today: '7days', all: '7days' },
+            monthly: { today: 'monthly', all: 'monthly' },
+            all: { today: 'today', all: 'all' }
+          }
+          costsParams = periodMapping[timeRange] || costsParams
         }
-        costsParams = periodMapping[timeRange] || costsParams
-      }
 
-      const [dashboardResponse, todayCostsResponse, totalCostsResponse] = await Promise.all([
-        apiClient.get('/admin/dashboard'),
-        apiClient.get(`/admin/usage-costs?period=${costsParams.today}`),
-        apiClient.get(`/admin/usage-costs?period=${costsParams.all}`)
-      ])
+        const [dashboardResponse, todayCostsResponse, totalCostsResponse] = await Promise.all([
+          apiClient.get('/admin/dashboard'),
+          apiClient.get(`/admin/usage-costs?period=${costsParams.today}`),
+          apiClient.get(`/admin/usage-costs?period=${costsParams.all}`)
+        ])
 
-      if (dashboardResponse.success) {
-        const overview = dashboardResponse.data.overview || {}
-        const recentActivity = dashboardResponse.data.recentActivity || {}
-        const systemAverages = dashboardResponse.data.systemAverages || {}
-        const realtimeMetrics = dashboardResponse.data.realtimeMetrics || {}
-        const systemHealth = dashboardResponse.data.systemHealth || {}
+        if (dashboardResponse.success) {
+          const overview = dashboardResponse.data.overview || {}
+          const recentActivity = dashboardResponse.data.recentActivity || {}
+          const systemAverages = dashboardResponse.data.systemAverages || {}
+          const realtimeMetrics = dashboardResponse.data.realtimeMetrics || {}
+          const systemHealth = dashboardResponse.data.systemHealth || {}
 
-        dashboardData.value = {
-          totalApiKeys: overview.totalApiKeys || 0,
-          activeApiKeys: overview.activeApiKeys || 0,
-          // 使用新的统一统计字段
-          totalAccounts: overview.totalAccounts || overview.totalClaudeAccounts || 0,
-          normalAccounts: overview.normalAccounts || 0,
-          abnormalAccounts: overview.abnormalAccounts || 0,
-          pausedAccounts: overview.pausedAccounts || 0,
-          activeAccounts: overview.activeAccounts || overview.activeClaudeAccounts || 0, // 兼容
-          rateLimitedAccounts:
-            overview.rateLimitedAccounts || overview.rateLimitedClaudeAccounts || 0,
-          // 各平台详细统计
-          accountsByPlatform: overview.accountsByPlatform || {
-            claude: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
-            'claude-console': { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
-            gemini: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
-            openai: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
-            azure_openai: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
-            bedrock: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 }
-          },
-          todayRequests: recentActivity.requestsToday || 0,
-          totalRequests: overview.totalRequestsUsed || 0,
-          todayTokens: recentActivity.tokensToday || 0,
-          todayInputTokens: recentActivity.inputTokensToday || 0,
-          todayOutputTokens: recentActivity.outputTokensToday || 0,
-          totalTokens: overview.totalTokensUsed || 0,
-          totalInputTokens: overview.totalInputTokensUsed || 0,
-          totalOutputTokens: overview.totalOutputTokensUsed || 0,
-          totalCacheCreateTokens: overview.totalCacheCreateTokensUsed || 0,
-          totalCacheReadTokens: overview.totalCacheReadTokensUsed || 0,
-          todayCacheCreateTokens: recentActivity.cacheCreateTokensToday || 0,
-          todayCacheReadTokens: recentActivity.cacheReadTokensToday || 0,
-          systemRPM: systemAverages.rpm || 0,
-          systemTPM: systemAverages.tpm || 0,
-          realtimeRPM: realtimeMetrics.rpm || 0,
-          realtimeTPM: realtimeMetrics.tpm || 0,
-          metricsWindow: realtimeMetrics.windowMinutes || 5,
-          isHistoricalMetrics: realtimeMetrics.isHistorical || false,
-          systemStatus: systemHealth.redisConnected ? '正常' : '异常',
-          uptime: systemHealth.uptime || 0,
-          systemTimezone: dashboardResponse.data.systemTimezone || 8
-        }
-      }
-
-      // 更新费用数据
-      if (todayCostsResponse.success && totalCostsResponse.success) {
-        costsData.value = {
-          todayCosts: todayCostsResponse.data.totalCosts || {
-            totalCost: 0,
-            formatted: { totalCost: '$0.000000' }
-          },
-          totalCosts: totalCostsResponse.data.totalCosts || {
-            totalCost: 0,
-            formatted: { totalCost: '$0.000000' }
+          dashboardData.value = {
+            totalApiKeys: overview.totalApiKeys || 0,
+            activeApiKeys: overview.activeApiKeys || 0,
+            // 使用新的统一统计字段
+            totalAccounts: overview.totalAccounts || overview.totalClaudeAccounts || 0,
+            normalAccounts: overview.normalAccounts || 0,
+            abnormalAccounts: overview.abnormalAccounts || 0,
+            pausedAccounts: overview.pausedAccounts || 0,
+            activeAccounts: overview.activeAccounts || overview.activeClaudeAccounts || 0, // 兼容
+            rateLimitedAccounts:
+              overview.rateLimitedAccounts || overview.rateLimitedClaudeAccounts || 0,
+            // 各平台详细统计
+            accountsByPlatform: overview.accountsByPlatform || {
+              claude: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
+              'claude-console': { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
+              gemini: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
+              openai: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
+              azure_openai: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 },
+              bedrock: { total: 0, normal: 0, abnormal: 0, paused: 0, rateLimited: 0 }
+            },
+            todayRequests: recentActivity.requestsToday || 0,
+            totalRequests: overview.totalRequestsUsed || 0,
+            todayTokens: recentActivity.tokensToday || 0,
+            todayInputTokens: recentActivity.inputTokensToday || 0,
+            todayOutputTokens: recentActivity.outputTokensToday || 0,
+            totalTokens: overview.totalTokensUsed || 0,
+            totalInputTokens: overview.totalInputTokensUsed || 0,
+            totalOutputTokens: overview.totalOutputTokensUsed || 0,
+            totalCacheCreateTokens: overview.totalCacheCreateTokensUsed || 0,
+            totalCacheReadTokens: overview.totalCacheReadTokensUsed || 0,
+            todayCacheCreateTokens: recentActivity.cacheCreateTokensToday || 0,
+            todayCacheReadTokens: recentActivity.cacheReadTokensToday || 0,
+            systemRPM: systemAverages.rpm || 0,
+            systemTPM: systemAverages.tpm || 0,
+            realtimeRPM: realtimeMetrics.rpm || 0,
+            realtimeTPM: realtimeMetrics.tpm || 0,
+            metricsWindow: realtimeMetrics.windowMinutes || 5,
+            isHistoricalMetrics: realtimeMetrics.isHistorical || false,
+            systemStatus: systemHealth.redisConnected ? '正常' : '异常',
+            uptime: systemHealth.uptime || 0,
+            systemTimezone: dashboardResponse.data.systemTimezone || 8
           }
         }
+
+        // 更新费用数据
+        if (todayCostsResponse.success && totalCostsResponse.success) {
+          costsData.value = {
+            todayCosts: todayCostsResponse.data.totalCosts || {
+              totalCost: 0,
+              formatted: { totalCost: '$0.000000' }
+            },
+            totalCosts: totalCostsResponse.data.totalCosts || {
+              totalCost: 0,
+              formatted: { totalCost: '$0.000000' }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('加载仪表板数据失败:', error)
+      } finally {
+        loading.value = false
+        // 请求完成后清除 Promise，允许下次刷新
+        _loadDashboardDataPromise = null
       }
-    } catch (error) {
-      console.error('加载仪表板数据失败:', error)
-    } finally {
-      loading.value = false
-    }
+    })()
+
+    return _loadDashboardDataPromise
   }
 
   async function loadUsageTrend(days = 7, granularity = 'day') {
@@ -857,6 +887,46 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return loadAccountUsageTrend(group)
   }
 
+  // 初始化方法，防止重复加载
+  // 使用模块级变量确保即使在极端情况下也不会重复调用
+  async function initializeDashboard() {
+    // 使用模块级变量进行检查，避免响应式系统的潜在延迟
+    if (_dashboardInitialized || _dashboardInitializing) {
+      debugLog('跳过初始化：已初始化或正在初始化中')
+      return
+    }
+
+    _dashboardInitializing = true
+    initializing.value = true
+    debugLog('开始初始化...')
+
+    try {
+      await Promise.all([loadDashboardData(), refreshChartsData()])
+      _dashboardInitialized = true
+      initialized.value = true
+      debugLog('初始化完成')
+    } finally {
+      _dashboardInitializing = false
+      initializing.value = false
+    }
+  }
+
+  // 重置初始化状态（用于手动刷新）
+  function resetInitialized() {
+    _dashboardInitialized = false
+    initialized.value = false
+  }
+
+  // 完全重置 store 状态（用于登出等场景）
+  function $reset() {
+    _dashboardInitialized = false
+    _dashboardInitializing = false
+    _loadDashboardDataPromise = null
+    initialized.value = false
+    initializing.value = false
+    loading.value = false
+  }
+
   function calculateDaysBetween(start, end) {
     if (!start || !end) return 7
     const startDate = new Date(start)
@@ -873,6 +943,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   return {
     // 状态
     loading,
+    initialized,
     dashboardData,
     costsData,
     modelStats,
@@ -900,6 +971,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     setTrendGranularity,
     refreshChartsData,
     setAccountUsageGroup,
+    initializeDashboard,
+    resetInitialized,
+    $reset,
     disabledDate
   }
 })
