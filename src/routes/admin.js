@@ -194,41 +194,6 @@ router.get('/api-keys/:keyId/cost-debug', authenticateAdmin, async (req, res) =>
   }
 })
 
-// 🚀 获取API Keys基本信息（轻量级，用于AccountsView等场景）
-router.get('/api-keys/basic', authenticateAdmin, async (req, res) => {
-  try {
-    // 只获取基本信息，不计算统计数据
-    const apiKeys = await apiKeyService.getAllApiKeys()
-
-    // 只返回必要字段，不包含统计数据
-    const basicKeys = apiKeys
-      .filter((key) => key.isDeleted !== 'true')
-      .map((key) => ({
-        id: key.id,
-        name: key.name,
-        boundAccountId: key.boundAccountId,
-        boundGeminiAccountId: key.boundGeminiAccountId,
-        boundOpenaiAccountId: key.boundOpenaiAccountId,
-        boundDroidAccountId: key.boundDroidAccountId,
-        isActive: key.isActive,
-        permissions: key.permissions || 'all',
-        tags: key.tags || []
-      }))
-
-    res.json({
-      success: true,
-      data: basicKeys
-    })
-  } catch (error) {
-    logger.error('❌ Failed to get basic API keys:', error)
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get API keys',
-      message: error.message
-    })
-  }
-})
-
 // 获取所有API Keys
 router.get('/api-keys', authenticateAdmin, async (req, res) => {
   try {
@@ -5397,8 +5362,9 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
     ] = await Promise.all([
       redis.getSystemStats(),
       apiKeyService.getAllApiKeys(),
-      claudeAccountService.getAllAccounts(),
-      claudeConsoleAccountService.getAllAccounts(),
+      // Dashboard 只需要基本信息，使用 skipExtendedInfo 跳过额外的 Redis 查询（限流状态、会话窗口等）
+      claudeAccountService.getAllAccounts({ skipExtendedInfo: true }),
+      claudeConsoleAccountService.getAllAccounts({ skipExtendedInfo: true }),
       geminiAccountService.getAllAccounts(),
       bedrockAccountService.getAllAccounts(),
       redis.getAllOpenAIAccounts(),
@@ -5426,246 +5392,135 @@ router.get('/dashboard', authenticateAdmin, async (req, res) => {
       return false
     }
 
-    const normalDroidAccounts = droidAccounts.filter(
-      (acc) =>
-        normalizeBoolean(acc.isActive) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        normalizeBoolean(acc.schedulable) &&
-        !isRateLimitedFlag(acc.rateLimitStatus)
-    ).length
-    const abnormalDroidAccounts = droidAccounts.filter(
-      (acc) =>
-        !normalizeBoolean(acc.isActive) || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedDroidAccounts = droidAccounts.filter(
-      (acc) =>
-        !normalizeBoolean(acc.schedulable) &&
-        normalizeBoolean(acc.isActive) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedDroidAccounts = droidAccounts.filter((acc) =>
-      isRateLimitedFlag(acc.rateLimitStatus)
-    ).length
+    // 计算使用统计（优化：单次遍历计算所有统计数据）
+    const usageStats = apiKeys.reduce(
+      (acc, key) => {
+        const usage = key.usage?.total || {}
+        acc.tokens += usage.allTokens || 0
+        acc.requests += usage.requests || 0
+        acc.inputTokens += usage.inputTokens || 0
+        acc.outputTokens += usage.outputTokens || 0
+        acc.cacheCreateTokens += usage.cacheCreateTokens || 0
+        acc.cacheReadTokens += usage.cacheReadTokens || 0
+        if (key.isActive) {
+          acc.activeKeys++
+        }
+        return acc
+      },
+      {
+        tokens: 0,
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 0,
+        activeKeys: 0
+      }
+    )
+    const {
+      tokens: totalTokensUsed,
+      requests: totalRequestsUsed,
+      inputTokens: totalInputTokensUsed,
+      outputTokens: totalOutputTokensUsed,
+      cacheCreateTokens: totalCacheCreateTokensUsed,
+      cacheReadTokens: totalCacheReadTokensUsed,
+      activeKeys: activeApiKeys
+    } = usageStats
+    const totalAllTokensUsed = totalTokensUsed
 
-    // 计算使用统计（统一使用allTokens）
-    const totalTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.allTokens || 0),
-      0
-    )
-    const totalRequestsUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.requests || 0),
-      0
-    )
-    const totalInputTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.inputTokens || 0),
-      0
-    )
-    const totalOutputTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.outputTokens || 0),
-      0
-    )
-    const totalCacheCreateTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.cacheCreateTokens || 0),
-      0
-    )
-    const totalCacheReadTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.cacheReadTokens || 0),
-      0
-    )
-    const totalAllTokensUsed = apiKeys.reduce(
-      (sum, key) => sum + (key.usage?.total?.allTokens || 0),
-      0
-    )
+    // 优化：使用单次遍历统计账户状态（减少 32 次 filter 为 8 次 reduce）
+    const countAccountStats = (accounts, options = {}) => {
+      const { useStringBooleans = false, useGeminiRateLimitFormat = false } = options
+      return accounts.reduce(
+        (stats, acc) => {
+          // 标准化布尔值判断
+          const isActive = useStringBooleans
+            ? acc.isActive === 'true' ||
+              acc.isActive === true ||
+              (!acc.isActive && acc.isActive !== 'false' && acc.isActive !== false)
+            : normalizeBoolean(acc.isActive)
+          const isSchedulable = useStringBooleans
+            ? acc.schedulable !== 'false' && acc.schedulable !== false
+            : acc.schedulable !== false
+          const isBlocked = acc.status === 'blocked' || acc.status === 'unauthorized'
+          const isRateLimited = useGeminiRateLimitFormat
+            ? acc.rateLimitStatus === 'limited' ||
+              (acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
+            : isRateLimitedFlag(acc.rateLimitStatus)
 
-    const activeApiKeys = apiKeys.filter((key) => key.isActive).length
+          // 分类统计
+          if (!isActive || isBlocked) {
+            stats.abnormal++
+          } else if (!isSchedulable) {
+            stats.paused++
+          } else if (isRateLimited) {
+            stats.rateLimited++
+          } else {
+            stats.normal++
+          }
+          return stats
+        },
+        { normal: 0, abnormal: 0, paused: 0, rateLimited: 0 }
+      )
+    }
 
-    // Claude账户统计 - 根据账户管理页面的判断逻辑
-    const normalClaudeAccounts = claudeAccounts.filter(
-      (acc) =>
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== false &&
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalClaudeAccounts = claudeAccounts.filter(
-      (acc) => !acc.isActive || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedClaudeAccounts = claudeAccounts.filter(
-      (acc) =>
-        acc.schedulable === false &&
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedClaudeAccounts = claudeAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    // Claude账户统计
+    const claudeStats = countAccountStats(claudeAccounts)
+    const normalClaudeAccounts = claudeStats.normal
+    const abnormalClaudeAccounts = claudeStats.abnormal
+    const pausedClaudeAccounts = claudeStats.paused
+    const rateLimitedClaudeAccounts = claudeStats.rateLimited
 
     // Claude Console账户统计
-    const normalClaudeConsoleAccounts = claudeConsoleAccounts.filter(
-      (acc) =>
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== false &&
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalClaudeConsoleAccounts = claudeConsoleAccounts.filter(
-      (acc) => !acc.isActive || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedClaudeConsoleAccounts = claudeConsoleAccounts.filter(
-      (acc) =>
-        acc.schedulable === false &&
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedClaudeConsoleAccounts = claudeConsoleAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    const claudeConsoleStats = countAccountStats(claudeConsoleAccounts)
+    const normalClaudeConsoleAccounts = claudeConsoleStats.normal
+    const abnormalClaudeConsoleAccounts = claudeConsoleStats.abnormal
+    const pausedClaudeConsoleAccounts = claudeConsoleStats.paused
+    const rateLimitedClaudeConsoleAccounts = claudeConsoleStats.rateLimited
 
     // Gemini账户统计
-    const normalGeminiAccounts = geminiAccounts.filter(
-      (acc) =>
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== false &&
-        !(
-          acc.rateLimitStatus === 'limited' ||
-          (acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-        )
-    ).length
-    const abnormalGeminiAccounts = geminiAccounts.filter(
-      (acc) => !acc.isActive || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedGeminiAccounts = geminiAccounts.filter(
-      (acc) =>
-        acc.schedulable === false &&
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedGeminiAccounts = geminiAccounts.filter(
-      (acc) =>
-        acc.rateLimitStatus === 'limited' ||
-        (acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
+    const geminiStats = countAccountStats(geminiAccounts, { useGeminiRateLimitFormat: true })
+    const normalGeminiAccounts = geminiStats.normal
+    const abnormalGeminiAccounts = geminiStats.abnormal
+    const pausedGeminiAccounts = geminiStats.paused
+    const rateLimitedGeminiAccounts = geminiStats.rateLimited
 
     // Bedrock账户统计
-    const normalBedrockAccounts = bedrockAccounts.filter(
-      (acc) =>
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== false &&
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalBedrockAccounts = bedrockAccounts.filter(
-      (acc) => !acc.isActive || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedBedrockAccounts = bedrockAccounts.filter(
-      (acc) =>
-        acc.schedulable === false &&
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedBedrockAccounts = bedrockAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    const bedrockStats = countAccountStats(bedrockAccounts)
+    const normalBedrockAccounts = bedrockStats.normal
+    const abnormalBedrockAccounts = bedrockStats.abnormal
+    const pausedBedrockAccounts = bedrockStats.paused
+    const rateLimitedBedrockAccounts = bedrockStats.rateLimited
 
-    // OpenAI账户统计
-    // 注意：OpenAI账户的isActive和schedulable是字符串类型，默认值为'true'
-    const normalOpenAIAccounts = openaiAccounts.filter(
-      (acc) =>
-        (acc.isActive === 'true' ||
-          acc.isActive === true ||
-          (!acc.isActive && acc.isActive !== 'false' && acc.isActive !== false)) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== 'false' &&
-        acc.schedulable !== false && // 包括'true'、true和undefined
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalOpenAIAccounts = openaiAccounts.filter(
-      (acc) =>
-        acc.isActive === 'false' ||
-        acc.isActive === false ||
-        acc.status === 'blocked' ||
-        acc.status === 'unauthorized'
-    ).length
-    const pausedOpenAIAccounts = openaiAccounts.filter(
-      (acc) =>
-        (acc.schedulable === 'false' || acc.schedulable === false) &&
-        (acc.isActive === 'true' ||
-          acc.isActive === true ||
-          (!acc.isActive && acc.isActive !== 'false' && acc.isActive !== false)) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedOpenAIAccounts = openaiAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    // OpenAI账户统计（使用字符串布尔值）
+    const openaiStats = countAccountStats(openaiAccounts, { useStringBooleans: true })
+    const normalOpenAIAccounts = openaiStats.normal
+    const abnormalOpenAIAccounts = openaiStats.abnormal
+    const pausedOpenAIAccounts = openaiStats.paused
+    const rateLimitedOpenAIAccounts = openaiStats.rateLimited
 
     // CCR账户统计
-    const normalCcrAccounts = ccrAccounts.filter(
-      (acc) =>
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== false &&
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalCcrAccounts = ccrAccounts.filter(
-      (acc) => !acc.isActive || acc.status === 'blocked' || acc.status === 'unauthorized'
-    ).length
-    const pausedCcrAccounts = ccrAccounts.filter(
-      (acc) =>
-        acc.schedulable === false &&
-        acc.isActive &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedCcrAccounts = ccrAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    const ccrStats = countAccountStats(ccrAccounts)
+    const normalCcrAccounts = ccrStats.normal
+    const abnormalCcrAccounts = ccrStats.abnormal
+    const pausedCcrAccounts = ccrStats.paused
+    const rateLimitedCcrAccounts = ccrStats.rateLimited
 
-    // OpenAI-Responses账户统计
-    // 注意：OpenAI-Responses账户的isActive和schedulable也是字符串类型
-    const normalOpenAIResponsesAccounts = openaiResponsesAccounts.filter(
-      (acc) =>
-        (acc.isActive === 'true' ||
-          acc.isActive === true ||
-          (!acc.isActive && acc.isActive !== 'false' && acc.isActive !== false)) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized' &&
-        acc.schedulable !== 'false' &&
-        acc.schedulable !== false &&
-        !(acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited)
-    ).length
-    const abnormalOpenAIResponsesAccounts = openaiResponsesAccounts.filter(
-      (acc) =>
-        acc.isActive === 'false' ||
-        acc.isActive === false ||
-        acc.status === 'blocked' ||
-        acc.status === 'unauthorized'
-    ).length
-    const pausedOpenAIResponsesAccounts = openaiResponsesAccounts.filter(
-      (acc) =>
-        (acc.schedulable === 'false' || acc.schedulable === false) &&
-        (acc.isActive === 'true' ||
-          acc.isActive === true ||
-          (!acc.isActive && acc.isActive !== 'false' && acc.isActive !== false)) &&
-        acc.status !== 'blocked' &&
-        acc.status !== 'unauthorized'
-    ).length
-    const rateLimitedOpenAIResponsesAccounts = openaiResponsesAccounts.filter(
-      (acc) => acc.rateLimitStatus && acc.rateLimitStatus.isRateLimited
-    ).length
+    // OpenAI-Responses账户统计（使用字符串布尔值）
+    const openaiResponsesStats = countAccountStats(openaiResponsesAccounts, {
+      useStringBooleans: true
+    })
+    const normalOpenAIResponsesAccounts = openaiResponsesStats.normal
+    const abnormalOpenAIResponsesAccounts = openaiResponsesStats.abnormal
+    const pausedOpenAIResponsesAccounts = openaiResponsesStats.paused
+    const rateLimitedOpenAIResponsesAccounts = openaiResponsesStats.rateLimited
+
+    // Droid账户统计
+    const droidStats = countAccountStats(droidAccounts)
+    const normalDroidAccounts = droidStats.normal
+    const abnormalDroidAccounts = droidStats.abnormal
+    const pausedDroidAccounts = droidStats.paused
+    const rateLimitedDroidAccounts = droidStats.rateLimited
 
     const dashboard = {
       overview: {
@@ -6678,34 +6533,53 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
     const trendData = []
     const accountCostTotals = new Map()
 
+    // 优化：使用内存缓存和 Pipeline 批量处理
+    const modelCostCache = new Map()
+
     const sumModelCosts = async (accountId, period, timeKey) => {
+      const cacheKey = `${accountId}:${period}:${timeKey}`
+      if (modelCostCache.has(cacheKey)) {
+        return modelCostCache.get(cacheKey)
+      }
+
       const modelPattern = `account_usage:model:${period}:${accountId}:*:${timeKey}`
       const modelKeys = await redis.scanKeys(modelPattern)
       let totalCost = 0
 
-      for (const modelKey of modelKeys) {
-        const modelData = await client.hgetall(modelKey)
-        if (!modelData) {
-          continue
+      if (modelKeys.length > 0) {
+        // 使用 Pipeline 批量获取数据
+        const pipeline = client.pipeline()
+        for (const modelKey of modelKeys) {
+          pipeline.hgetall(modelKey)
         }
+        const results = await pipeline.exec()
 
-        const parts = modelKey.split(':')
-        if (parts.length < 5) {
-          continue
+        for (let i = 0; i < results.length; i++) {
+          const [err, modelData] = results[i]
+          if (err || !modelData) {
+            continue
+          }
+
+          const modelKey = modelKeys[i]
+          const parts = modelKey.split(':')
+          if (parts.length < 5) {
+            continue
+          }
+
+          const modelName = parts[4]
+          const usage = {
+            input_tokens: parseInt(modelData.inputTokens) || 0,
+            output_tokens: parseInt(modelData.outputTokens) || 0,
+            cache_creation_input_tokens: parseInt(modelData.cacheCreateTokens) || 0,
+            cache_read_input_tokens: parseInt(modelData.cacheReadTokens) || 0
+          }
+
+          const costResult = CostCalculator.calculateCost(usage, modelName)
+          totalCost += costResult.costs.total
         }
-
-        const modelName = parts[4]
-        const usage = {
-          input_tokens: parseInt(modelData.inputTokens) || 0,
-          output_tokens: parseInt(modelData.outputTokens) || 0,
-          cache_creation_input_tokens: parseInt(modelData.cacheCreateTokens) || 0,
-          cache_read_input_tokens: parseInt(modelData.cacheReadTokens) || 0
-        }
-
-        const costResult = CostCalculator.calculateCost(usage, modelName)
-        totalCost += costResult.costs.total
       }
 
+      modelCostCache.set(cacheKey, totalCost)
       return totalCost
     }
 
@@ -6744,55 +6618,72 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
         const pattern = `account_usage:hourly:*:${hourKey}`
         const keys = await redis.scanKeys(pattern)
 
+        // 优化：使用 Pipeline 批量获取 HGETALL 数据
+        const validKeys = []
+        const keyAccountIds = []
+
         for (const key of keys) {
           const match = key.match(/account_usage:hourly:(.+?):\d{4}-\d{2}-\d{2}:\d{2}/)
-          if (!match) {
-            continue
+          if (match && accountIdSet.has(match[1])) {
+            validKeys.push(key)
+            keyAccountIds.push(match[1])
           }
+        }
 
-          const accountId = match[1]
-          if (!accountIdSet.has(accountId)) {
-            continue
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
           }
+          const results = await pipeline.exec()
 
-          const data = await client.hgetall(key)
-          if (!data) {
-            continue
-          }
+          // 并行计算所有账户的成本
+          const costPromises = keyAccountIds.map((accountId) =>
+            sumModelCosts(accountId, 'hourly', hourKey)
+          )
+          const costs = await Promise.all(costPromises)
 
-          const inputTokens = parseInt(data.inputTokens) || 0
-          const outputTokens = parseInt(data.outputTokens) || 0
-          const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
-          const cacheReadTokens = parseInt(data.cacheReadTokens) || 0
-          const allTokens =
-            parseInt(data.allTokens) ||
-            inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
-          const requests = parseInt(data.requests) || 0
-
-          let cost = await sumModelCosts(accountId, 'hourly', hourKey)
-
-          if (cost === 0 && allTokens > 0) {
-            const fallbackUsage = {
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              cache_creation_input_tokens: cacheCreateTokens,
-              cache_read_input_tokens: cacheReadTokens
+          for (let i = 0; i < results.length; i++) {
+            const [err, data] = results[i]
+            if (err || !data) {
+              continue
             }
-            const fallbackResult = CostCalculator.calculateCost(fallbackUsage, fallbackModel)
-            cost = fallbackResult.costs.total
+
+            const accountId = keyAccountIds[i]
+            const inputTokens = parseInt(data.inputTokens) || 0
+            const outputTokens = parseInt(data.outputTokens) || 0
+            const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
+            const cacheReadTokens = parseInt(data.cacheReadTokens) || 0
+            const allTokens =
+              parseInt(data.allTokens) ||
+              inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
+            const requests = parseInt(data.requests) || 0
+
+            let cost = costs[i]
+
+            if (cost === 0 && allTokens > 0) {
+              const fallbackUsage = {
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+                cache_creation_input_tokens: cacheCreateTokens,
+                cache_read_input_tokens: cacheReadTokens
+              }
+              const fallbackResult = CostCalculator.calculateCost(fallbackUsage, fallbackModel)
+              cost = fallbackResult.costs.total
+            }
+
+            const formattedCost = CostCalculator.formatCost(cost)
+            const accountInfo = accountMap.get(accountId)
+
+            hourData.accounts[accountId] = {
+              name: accountInfo ? accountInfo.name : `账号 ${accountId.slice(0, 8)}`,
+              cost,
+              formattedCost,
+              requests
+            }
+
+            accountCostTotals.set(accountId, (accountCostTotals.get(accountId) || 0) + cost)
           }
-
-          const formattedCost = CostCalculator.formatCost(cost)
-          const accountInfo = accountMap.get(accountId)
-
-          hourData.accounts[accountId] = {
-            name: accountInfo ? accountInfo.name : `账号 ${accountId.slice(0, 8)}`,
-            cost,
-            formattedCost,
-            requests
-          }
-
-          accountCostTotals.set(accountId, (accountCostTotals.get(accountId) || 0) + cost)
         }
 
         trendData.push(hourData)
@@ -6815,55 +6706,72 @@ router.get('/account-usage-trend', authenticateAdmin, async (req, res) => {
         const pattern = `account_usage:daily:*:${dateStr}`
         const keys = await redis.scanKeys(pattern)
 
+        // 优化：使用 Pipeline 批量获取 HGETALL 数据
+        const validKeys = []
+        const keyAccountIds = []
+
         for (const key of keys) {
           const match = key.match(/account_usage:daily:(.+?):\d{4}-\d{2}-\d{2}/)
-          if (!match) {
-            continue
+          if (match && accountIdSet.has(match[1])) {
+            validKeys.push(key)
+            keyAccountIds.push(match[1])
           }
+        }
 
-          const accountId = match[1]
-          if (!accountIdSet.has(accountId)) {
-            continue
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
           }
+          const results = await pipeline.exec()
 
-          const data = await client.hgetall(key)
-          if (!data) {
-            continue
-          }
+          // 并行计算所有账户的成本
+          const costPromises = keyAccountIds.map((accountId) =>
+            sumModelCosts(accountId, 'daily', dateStr)
+          )
+          const costs = await Promise.all(costPromises)
 
-          const inputTokens = parseInt(data.inputTokens) || 0
-          const outputTokens = parseInt(data.outputTokens) || 0
-          const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
-          const cacheReadTokens = parseInt(data.cacheReadTokens) || 0
-          const allTokens =
-            parseInt(data.allTokens) ||
-            inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
-          const requests = parseInt(data.requests) || 0
-
-          let cost = await sumModelCosts(accountId, 'daily', dateStr)
-
-          if (cost === 0 && allTokens > 0) {
-            const fallbackUsage = {
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              cache_creation_input_tokens: cacheCreateTokens,
-              cache_read_input_tokens: cacheReadTokens
+          for (let k = 0; k < results.length; k++) {
+            const [err, data] = results[k]
+            if (err || !data) {
+              continue
             }
-            const fallbackResult = CostCalculator.calculateCost(fallbackUsage, fallbackModel)
-            cost = fallbackResult.costs.total
+
+            const accountId = keyAccountIds[k]
+            const inputTokens = parseInt(data.inputTokens) || 0
+            const outputTokens = parseInt(data.outputTokens) || 0
+            const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
+            const cacheReadTokens = parseInt(data.cacheReadTokens) || 0
+            const allTokens =
+              parseInt(data.allTokens) ||
+              inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
+            const requests = parseInt(data.requests) || 0
+
+            let cost = costs[k]
+
+            if (cost === 0 && allTokens > 0) {
+              const fallbackUsage = {
+                input_tokens: inputTokens,
+                output_tokens: outputTokens,
+                cache_creation_input_tokens: cacheCreateTokens,
+                cache_read_input_tokens: cacheReadTokens
+              }
+              const fallbackResult = CostCalculator.calculateCost(fallbackUsage, fallbackModel)
+              cost = fallbackResult.costs.total
+            }
+
+            const formattedCost = CostCalculator.formatCost(cost)
+            const accountInfo = accountMap.get(accountId)
+
+            dayData.accounts[accountId] = {
+              name: accountInfo ? accountInfo.name : `账号 ${accountId.slice(0, 8)}`,
+              cost,
+              formattedCost,
+              requests
+            }
+
+            accountCostTotals.set(accountId, (accountCostTotals.get(accountId) || 0) + cost)
           }
-
-          const formattedCost = CostCalculator.formatCost(cost)
-          const accountInfo = accountMap.get(accountId)
-
-          dayData.accounts[accountId] = {
-            name: accountInfo ? accountInfo.name : `账号 ${accountId.slice(0, 8)}`,
-            cost,
-            formattedCost,
-            requests
-          }
-
-          accountCostTotals.set(accountId, (accountCostTotals.get(accountId) || 0) + cost)
         }
 
         trendData.push(dayData)
@@ -6953,18 +6861,36 @@ router.get('/api-keys-usage-trend', authenticateAdmin, async (req, res) => {
           apiKeys: {}
         }
 
-        // 先收集基础数据
+        // 先收集基础数据（优化：使用 Pipeline 批量 HGETALL）
         const apiKeyDataMap = new Map()
+        const validKeys = []
+        const keyApiKeyIds = []
+
+        // 先解析所有 key 和对应的 apiKeyId
         for (const key of keys) {
           const match = key.match(/usage:hourly:(.+?):\d{4}-\d{2}-\d{2}:\d{2}/)
-          if (!match) {
-            continue
+          if (match && apiKeyMap.has(match[1])) {
+            validKeys.push(key)
+            keyApiKeyIds.push(match[1])
           }
+        }
 
-          const apiKeyId = match[1]
-          const data = await client.hgetall(key)
+        // 使用 Pipeline 批量获取数据
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
+          }
+          const results = await pipeline.exec()
 
-          if (data && apiKeyMap.has(apiKeyId)) {
+          // 处理结果
+          for (let i = 0; i < results.length; i++) {
+            const [err, data] = results[i]
+            if (err || !data) {
+              continue
+            }
+
+            const apiKeyId = keyApiKeyIds[i]
             const inputTokens = parseInt(data.inputTokens) || 0
             const outputTokens = parseInt(data.outputTokens) || 0
             const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
@@ -6983,22 +6909,37 @@ router.get('/api-keys-usage-trend', authenticateAdmin, async (req, res) => {
           }
         }
 
-        // 获取该小时的模型级别数据来计算准确费用
+        // 获取该小时的模型级别数据来计算准确费用（优化：使用 Pipeline）
         const modelPattern = `usage:*:model:hourly:*:${hourKey}`
         const modelKeys = await redis.scanKeys(modelPattern)
         const apiKeyCostMap = new Map()
 
+        // 解析模型 keys 并批量获取
+        const validModelKeys = []
+        const modelKeyInfo = []
+
         for (const modelKey of modelKeys) {
           const match = modelKey.match(/usage:(.+?):model:hourly:(.+?):\d{4}-\d{2}-\d{2}:\d{2}/)
-          if (!match) {
-            continue
+          if (match && apiKeyDataMap.has(match[1])) {
+            validModelKeys.push(modelKey)
+            modelKeyInfo.push({ apiKeyId: match[1], model: match[2] })
           }
+        }
 
-          const apiKeyId = match[1]
-          const model = match[2]
-          const modelData = await client.hgetall(modelKey)
+        if (validModelKeys.length > 0) {
+          const modelPipeline = client.pipeline()
+          for (const key of validModelKeys) {
+            modelPipeline.hgetall(key)
+          }
+          const modelResults = await modelPipeline.exec()
 
-          if (modelData && apiKeyDataMap.has(apiKeyId)) {
+          for (let i = 0; i < modelResults.length; i++) {
+            const [err, modelData] = modelResults[i]
+            if (err || !modelData) {
+              continue
+            }
+
+            const { apiKeyId, model } = modelKeyInfo[i]
             const usage = {
               input_tokens: parseInt(modelData.inputTokens) || 0,
               output_tokens: parseInt(modelData.outputTokens) || 0,
@@ -7064,18 +7005,36 @@ router.get('/api-keys-usage-trend', authenticateAdmin, async (req, res) => {
           apiKeys: {}
         }
 
-        // 先收集基础数据
+        // 先收集基础数据（优化：使用 Pipeline 批量 HGETALL）
         const apiKeyDataMap = new Map()
+        const validKeys = []
+        const keyApiKeyIds = []
+
+        // 先解析所有 key 和对应的 apiKeyId
         for (const key of keys) {
           const match = key.match(/usage:daily:(.+?):\d{4}-\d{2}-\d{2}/)
-          if (!match) {
-            continue
+          if (match && apiKeyMap.has(match[1])) {
+            validKeys.push(key)
+            keyApiKeyIds.push(match[1])
           }
+        }
 
-          const apiKeyId = match[1]
-          const data = await client.hgetall(key)
+        // 使用 Pipeline 批量获取数据
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
+          }
+          const results = await pipeline.exec()
 
-          if (data && apiKeyMap.has(apiKeyId)) {
+          // 处理结果
+          for (let k = 0; k < results.length; k++) {
+            const [err, data] = results[k]
+            if (err || !data) {
+              continue
+            }
+
+            const apiKeyId = keyApiKeyIds[k]
             const inputTokens = parseInt(data.inputTokens) || 0
             const outputTokens = parseInt(data.outputTokens) || 0
             const cacheCreateTokens = parseInt(data.cacheCreateTokens) || 0
@@ -7094,22 +7053,37 @@ router.get('/api-keys-usage-trend', authenticateAdmin, async (req, res) => {
           }
         }
 
-        // 获取该天的模型级别数据来计算准确费用
+        // 获取该天的模型级别数据来计算准确费用（优化：使用 Pipeline）
         const modelPattern = `usage:*:model:daily:*:${dateStr}`
         const modelKeys = await redis.scanKeys(modelPattern)
         const apiKeyCostMap = new Map()
 
+        // 解析模型 keys 并批量获取
+        const validModelKeys = []
+        const modelKeyInfo = []
+
         for (const modelKey of modelKeys) {
           const match = modelKey.match(/usage:(.+?):model:daily:(.+?):\d{4}-\d{2}-\d{2}/)
-          if (!match) {
-            continue
+          if (match && apiKeyDataMap.has(match[1])) {
+            validModelKeys.push(modelKey)
+            modelKeyInfo.push({ apiKeyId: match[1], model: match[2] })
           }
+        }
 
-          const apiKeyId = match[1]
-          const model = match[2]
-          const modelData = await client.hgetall(modelKey)
+        if (validModelKeys.length > 0) {
+          const modelPipeline = client.pipeline()
+          for (const key of validModelKeys) {
+            modelPipeline.hgetall(key)
+          }
+          const modelResults = await modelPipeline.exec()
 
-          if (modelData && apiKeyDataMap.has(apiKeyId)) {
+          for (let k = 0; k < modelResults.length; k++) {
+            const [err, modelData] = modelResults[k]
+            if (err || !modelData) {
+              continue
+            }
+
+            const { apiKeyId, model } = modelKeyInfo[k]
             const usage = {
               input_tokens: parseInt(modelData.inputTokens) || 0,
               output_tokens: parseInt(modelData.outputTokens) || 0,
@@ -7247,7 +7221,7 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
     } else if (period === 'monthly') {
       pattern = `usage:model:monthly:*:${currentMonth}`
     } else if (period === '7days') {
-      // 最近7天：汇总daily数据
+      // 最近7天：汇总daily数据（优化：使用 Pipeline 批量获取）
       const modelUsageMap = new Map()
 
       // 获取最近7天的所有daily统计数据
@@ -7262,17 +7236,32 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
 
         const dayKeys = await redis.scanKeys(dayPattern)
 
+        // 优化：使用 Pipeline 批量获取数据
+        const validKeys = []
+        const keyModels = []
+
         for (const key of dayKeys) {
           const modelMatch = key.match(/usage:model:daily:(.+):\d{4}-\d{2}-\d{2}$/)
-          if (!modelMatch) {
-            continue
+          if (modelMatch) {
+            validKeys.push(key)
+            keyModels.push(normalizeModelName(modelMatch[1]))
           }
+        }
 
-          const rawModel = modelMatch[1]
-          const normalizedModel = normalizeModelName(rawModel)
-          const data = await client.hgetall(key)
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
+          }
+          const results = await pipeline.exec()
 
-          if (data && Object.keys(data).length > 0) {
+          for (let j = 0; j < results.length; j++) {
+            const [err, data] = results[j]
+            if (err || !data || Object.keys(data).length === 0) {
+              continue
+            }
+
+            const normalizedModel = keyModels[j]
             if (!modelUsageMap.has(normalizedModel)) {
               modelUsageMap.set(normalizedModel, {
                 inputTokens: 0,
@@ -7350,20 +7339,36 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
       logger.info(`💰 Total period calculation: found ${allModelKeys.length} monthly model keys`)
 
       if (allModelKeys.length > 0) {
-        // 如果有详细的模型统计数据，使用模型级别的计算
+        // 如果有详细的模型统计数据，使用模型级别的计算（优化：使用 Pipeline 批量获取）
         const modelUsageMap = new Map()
 
+        // 解析所有 key 和对应的 model
+        const validKeys = []
+        const keyModels = []
+
         for (const key of allModelKeys) {
-          // 解析模型名称（只处理monthly数据）
           const modelMatch = key.match(/usage:model:monthly:(.+):(\d{4}-\d{2})$/)
-          if (!modelMatch) {
-            continue
+          if (modelMatch) {
+            validKeys.push(key)
+            keyModels.push(modelMatch[1])
           }
+        }
 
-          const model = modelMatch[1]
-          const data = await client.hgetall(key)
+        // 使用 Pipeline 批量获取数据
+        if (validKeys.length > 0) {
+          const pipeline = client.pipeline()
+          for (const key of validKeys) {
+            pipeline.hgetall(key)
+          }
+          const results = await pipeline.exec()
 
-          if (data && Object.keys(data).length > 0) {
+          for (let i = 0; i < results.length; i++) {
+            const [err, data] = results[i]
+            if (err || !data || Object.keys(data).length === 0) {
+              continue
+            }
+
+            const model = keyModels[i]
             if (!modelUsageMap.has(model)) {
               modelUsageMap.set(model, {
                 inputTokens: 0,

@@ -189,7 +189,7 @@ async function main() {
       orphanedByAccount[accountId].push(key)
     }
 
-    console.log('\n' + '='.repeat(60))
+    console.log(`\n${'='.repeat(60)}`)
     console.log('扫描结果')
     console.log('='.repeat(60))
     console.log(`发现 ${Object.keys(orphanedByAccount).length} 个已删除账号的残留数据`)
@@ -209,7 +209,7 @@ async function main() {
       }
 
       if (executeMode) {
-        console.log('\n' + '='.repeat(60))
+        console.log(`\n${'='.repeat(60)}`)
         console.log('开始删除孤立数据...')
         console.log('='.repeat(60))
 
@@ -226,7 +226,7 @@ async function main() {
 
         console.log(`\n删除完成！共删除 ${deletedCount} 个孤立键`)
       } else {
-        console.log('\n' + '-'.repeat(60))
+        console.log(`\n${'-'.repeat(60)}`)
         console.log('这是干跑模式，没有删除任何数据。')
         console.log('要实际执行删除，请运行:')
         console.log('  node scripts/cleanup-orphaned-account-usage.js --execute')

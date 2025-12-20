@@ -710,6 +710,8 @@ const {
   setTrendGranularity,
   refreshChartsData,
   setAccountUsageGroup,
+  initializeDashboard,
+  resetInitialized,
   disabledDate
 } = dashboardStore
 
@@ -1483,6 +1485,8 @@ async function refreshAllData() {
 
   isRefreshing.value = true
   try {
+    // 手动刷新时，先重置初始化状态
+    resetInitialized()
     await Promise.all([loadDashboardData(), refreshChartsData()])
   } finally {
     isRefreshing.value = false
@@ -1566,8 +1570,8 @@ watch(isDarkMode, () => {
 
 // 初始化
 onMounted(async () => {
-  // 加载所有数据
-  await refreshAllData()
+  // 使用初始化方法，防止重复加载
+  await initializeDashboard()
 
   // 创建图表
   await nextTick()

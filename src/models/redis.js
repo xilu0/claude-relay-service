@@ -1699,7 +1699,7 @@ class RedisClient {
       `account_usage:hourly:${accountId}:*`,
       `account_usage:model:daily:${accountId}:*`,
       `account_usage:model:monthly:${accountId}:*`,
-      `account_usage:model:hourly:${accountId}:*`,
+      `account_usage:model:hourly:${accountId}:*`
     ]
 
     // 其他关联数据

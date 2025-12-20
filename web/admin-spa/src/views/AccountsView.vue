@@ -719,12 +719,6 @@
                   >
                     {{ account.errorMessage }}
                   </span>
-                  <span
-                    v-if="account.accountType === 'dedicated'"
-                    class="text-xs text-gray-500 dark:text-gray-400"
-                  >
-                    绑定: {{ account.boundApiKeysCount || 0 }} 个API Key
-                  </span>
                 </div>
               </td>
               <td class="whitespace-nowrap px-3 py-4">
@@ -1808,7 +1802,6 @@ const accountsLoading = ref(false)
 const accountSortBy = ref('name')
 const accountsSortBy = ref('')
 const accountsSortOrder = ref('asc')
-const apiKeys = ref([])
 const accountGroups = ref([])
 const groupFilter = ref('all')
 const platformFilter = ref('all')
@@ -1858,7 +1851,6 @@ const editingExpiryAccount = ref(null)
 const expiryEditModalRef = ref(null)
 
 // 缓存状态标志
-const apiKeysLoaded = ref(false)
 const groupsLoaded = ref(false)
 const groupMembersLoaded = ref(false)
 const accountGroupMap = ref(new Map()) // Map<accountId, Array<groupInfo>>
@@ -2372,8 +2364,8 @@ const loadAccounts = async (forceReload = false) => {
       }
     }
 
-    // 使用缓存机制加载 API Keys 和分组数据
-    await Promise.all([loadApiKeys(forceReload), loadAccountGroups(forceReload)])
+    // 使用缓存机制加载分组数据
+    await loadAccountGroups(forceReload)
 
     // 后端账户API已经包含分组信息，不需要单独加载分组成员关系
     // await loadGroupMembers(forceReload)
@@ -2395,80 +2387,54 @@ const loadAccounts = async (forceReload = false) => {
 
     if (claudeData.success) {
       const claudeAccounts = (claudeData.data || []).map((acc) => {
-        // 计算每个Claude账户绑定的API Key数量
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.claudeAccountId === acc.id
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'claude', boundApiKeysCount }
+        return { ...acc, platform: 'claude' }
       })
       allAccounts.push(...claudeAccounts)
     }
 
     if (claudeConsoleData.success) {
       const claudeConsoleAccounts = (claudeConsoleData.data || []).map((acc) => {
-        // 计算每个Claude Console账户绑定的API Key数量
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.claudeConsoleAccountId === acc.id
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'claude-console', boundApiKeysCount }
+        return { ...acc, platform: 'claude-console' }
       })
       allAccounts.push(...claudeConsoleAccounts)
     }
 
     if (bedrockData.success) {
       const bedrockAccounts = (bedrockData.data || []).map((acc) => {
-        // Bedrock账户暂时不支持直接绑定
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'bedrock', boundApiKeysCount: 0 }
+        return { ...acc, platform: 'bedrock' }
       })
       allAccounts.push(...bedrockAccounts)
     }
 
     if (geminiData.success) {
       const geminiAccounts = (geminiData.data || []).map((acc) => {
-        // 计算每个Gemini账户绑定的API Key数量
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.geminiAccountId === acc.id
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'gemini', boundApiKeysCount }
+        return { ...acc, platform: 'gemini' }
       })
       allAccounts.push(...geminiAccounts)
     }
     if (openaiData.success) {
       const openaiAccounts = (openaiData.data || []).map((acc) => {
-        // 计算每个OpenAI账户绑定的API Key数量
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.openaiAccountId === acc.id
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'openai', boundApiKeysCount }
+        return { ...acc, platform: 'openai' }
       })
       allAccounts.push(...openaiAccounts)
     }
     if (azureOpenaiData && azureOpenaiData.success) {
       const azureOpenaiAccounts = (azureOpenaiData.data || []).map((acc) => {
-        // 计算每个Azure OpenAI账户绑定的API Key数量
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.azureOpenaiAccountId === acc.id
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'azure_openai', boundApiKeysCount }
+        return { ...acc, platform: 'azure_openai' }
       })
       allAccounts.push(...azureOpenaiAccounts)
     }
 
     if (openaiResponsesData && openaiResponsesData.success) {
       const openaiResponsesAccounts = (openaiResponsesData.data || []).map((acc) => {
-        // 计算每个OpenAI-Responses账户绑定的API Key数量
-        // OpenAI-Responses账户使用 responses: 前缀
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.openaiAccountId === `responses:${acc.id}`
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'openai-responses', boundApiKeysCount }
+        return { ...acc, platform: 'openai-responses' }
       })
       allAccounts.push(...openaiResponsesAccounts)
     }
@@ -2476,8 +2442,7 @@ const loadAccounts = async (forceReload = false) => {
     // CCR 账户
     if (ccrData && ccrData.success) {
       const ccrAccounts = (ccrData.data || []).map((acc) => {
-        // CCR 不支持 API Key 绑定，固定为 0
-        return { ...acc, platform: 'ccr', boundApiKeysCount: 0 }
+        return { ...acc, platform: 'ccr' }
       })
       allAccounts.push(...ccrAccounts)
     }
@@ -2485,11 +2450,7 @@ const loadAccounts = async (forceReload = false) => {
     // Droid 账户
     if (droidData && droidData.success) {
       const droidAccounts = (droidData.data || []).map((acc) => {
-        return {
-          ...acc,
-          platform: 'droid',
-          boundApiKeysCount: acc.boundApiKeysCount ?? 0
-        }
+        return { ...acc, platform: 'droid' }
       })
       allAccounts.push(...droidAccounts)
     }
@@ -2497,13 +2458,8 @@ const loadAccounts = async (forceReload = false) => {
     // Gemini API 账户
     if (geminiApiData && geminiApiData.success) {
       const geminiApiAccounts = (geminiApiData.data || []).map((acc) => {
-        // 计算每个Gemini-API账户绑定的API Key数量
-        // Gemini-API账户使用 api: 前缀
-        const boundApiKeysCount = apiKeys.value.filter(
-          (key) => key.geminiAccountId === `api:${acc.id}`
-        ).length
         // 后端已经包含了groupInfos，直接使用
-        return { ...acc, platform: 'gemini-api', boundApiKeysCount }
+        return { ...acc, platform: 'gemini-api' }
       })
       allAccounts.push(...geminiApiAccounts)
     }
@@ -2620,24 +2576,6 @@ const clearSearch = () => {
   currentPage.value = 1
 }
 
-// 加载API Keys列表（缓存版本，使用轻量级端点）
-const loadApiKeys = async (forceReload = false) => {
-  if (!forceReload && apiKeysLoaded.value) {
-    return // 使用缓存数据
-  }
-
-  try {
-    // 🚀 使用轻量级端点，只获取基本信息，不计算统计数据
-    const response = await apiClient.get('/admin/api-keys/basic')
-    if (response.success) {
-      apiKeys.value = response.data || []
-      apiKeysLoaded.value = true
-    }
-  } catch (error) {
-    // 静默处理错误
-  }
-}
-
 // 加载账户分组列表（缓存版本）
 const loadAccountGroups = async (forceReload = false) => {
   if (!forceReload && groupsLoaded.value) {
@@ -2657,7 +2595,6 @@ const loadAccountGroups = async (forceReload = false) => {
 
 // 清空缓存的函数
 const clearCache = () => {
-  apiKeysLoaded.value = false
   groupsLoaded.value = false
   groupMembersLoaded.value = false
   accountGroupMap.value.clear()
@@ -2838,22 +2775,6 @@ const editAccount = (account) => {
   showEditAccountModal.value = true
 }
 
-const getBoundApiKeysForAccount = (account) => {
-  if (!account || !account.id) return []
-  return apiKeys.value.filter((key) => {
-    const accountId = account.id
-    return (
-      key.claudeAccountId === accountId ||
-      key.claudeConsoleAccountId === accountId ||
-      key.geminiAccountId === accountId ||
-      key.openaiAccountId === accountId ||
-      key.azureOpenaiAccountId === accountId ||
-      key.openaiAccountId === `responses:${accountId}` ||
-      key.geminiAccountId === `api:${accountId}`
-    )
-  })
-}
-
 const resolveAccountDeleteEndpoint = (account) => {
   switch (account.platform) {
     case 'claude':
@@ -2901,14 +2822,9 @@ const performAccountDeletion = async (account) => {
 
 // 删除账户
 const deleteAccount = async (account) => {
-  const boundKeys = getBoundApiKeysForAccount(account)
-  const boundKeysCount = boundKeys.length
-
   let confirmMessage = `确定要删除账户 "${account.name}" 吗？`
-  if (boundKeysCount > 0) {
-    confirmMessage += `\n\n⚠️ 注意：此账号有 ${boundKeysCount} 个 API Key 绑定。`
-    confirmMessage += `\n删除后，这些 API Key 将自动切换为共享池模式。`
-  }
+  confirmMessage +=
+    '\n\n⚠️ 注意：如果此账号有绑定的 API Key，删除后这些 API Key 将自动切换为共享池模式。'
   confirmMessage += '\n\n此操作不可恢复。'
 
   const confirmed = await showConfirm('删除账户', confirmMessage, '删除', '取消')
@@ -2929,9 +2845,7 @@ const deleteAccount = async (account) => {
     updateSelectAllState()
 
     groupMembersLoaded.value = false
-    apiKeysLoaded.value = false
     loadAccounts()
-    loadApiKeys(true)
   } else {
     showToast(result.message || '删除失败', 'error')
   }
@@ -2957,19 +2871,8 @@ const batchDeleteAccounts = async () => {
   }
 
   let confirmMessage = `确定要删除选中的 ${targets.length} 个账户吗？此操作不可恢复。`
-  const boundInfo = targets
-    .map((account) => ({ account, boundKeys: getBoundApiKeysForAccount(account) }))
-    .filter((item) => item.boundKeys.length > 0)
-
-  if (boundInfo.length > 0) {
-    confirmMessage += '\n\n⚠️ 以下账户存在绑定的 API Key，将自动解绑：'
-    boundInfo.forEach(({ account, boundKeys }) => {
-      const displayName = account.name || account.email || account.accountName || account.id
-      confirmMessage += `\n- ${displayName}: ${boundKeys.length} 个`
-    })
-    confirmMessage += '\n删除后，这些 API Key 将切换为共享池模式。'
-  }
-
+  confirmMessage +=
+    '\n\n⚠️ 注意：如果这些账号有绑定的 API Key，删除后 API Key 将自动切换为共享池模式。'
   confirmMessage += '\n\n请再次确认是否继续。'
 
   const confirmed = await showConfirm('批量删除账户', confirmMessage, '删除', '取消')
@@ -3006,7 +2909,6 @@ const batchDeleteAccounts = async () => {
     isIndeterminate.value = false
 
     groupMembersLoaded.value = false
-    apiKeysLoaded.value = false
     await loadAccounts(true)
   }
 

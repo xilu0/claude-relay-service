@@ -472,18 +472,25 @@ class ClaudeAccountService {
   }
 
   // 📋 获取所有Claude账户
-  async getAllAccounts() {
+  // options.skipExtendedInfo: 跳过额外的 Redis 查询（限流状态、会话窗口等），用于 Dashboard 等只需要基本信息的场景
+  async getAllAccounts(options = {}) {
+    const { skipExtendedInfo = false } = options
     try {
       const accounts = await redis.getAllClaudeAccounts()
 
       // 处理返回数据，移除敏感信息并添加限流状态和会话窗口信息
       const processedAccounts = await Promise.all(
         accounts.map(async (account) => {
-          // 获取限流状态信息
-          const rateLimitInfo = await this.getAccountRateLimitInfo(account.id)
+          // 当 skipExtendedInfo 为 true 时，跳过额外的 Redis 查询以提升性能
+          let rateLimitInfo = null
+          let sessionWindowInfo = null
 
-          // 获取会话窗口信息
-          const sessionWindowInfo = await this.getSessionWindowInfo(account.id)
+          if (!skipExtendedInfo) {
+            // 获取限流状态信息
+            rateLimitInfo = await this.getAccountRateLimitInfo(account.id)
+            // 获取会话窗口信息
+            sessionWindowInfo = await this.getSessionWindowInfo(account.id)
+          }
 
           // 构建 Claude Usage 快照（从 Redis 读取）
           const claudeUsage = this.buildClaudeUsageSnapshot(account)

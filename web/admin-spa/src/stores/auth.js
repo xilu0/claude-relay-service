@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import router from '@/router'
 import { apiClient } from '@/config/api'
+import { useDashboardStore } from '@/stores/dashboard'
 
 export const useAuthStore = defineStore('auth', () => {
   // 状态
@@ -53,6 +54,15 @@ export const useAuthStore = defineStore('auth', () => {
     authToken.value = ''
     username.value = ''
     localStorage.removeItem('authToken')
+
+    // 重置 dashboard store 状态，确保下次登录时重新加载数据
+    try {
+      const dashboardStore = useDashboardStore()
+      dashboardStore.$reset()
+    } catch {
+      // 忽略错误，store 可能未初始化
+    }
+
     router.push('/login')
   }
 
@@ -66,16 +76,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function verifyToken() {
     try {
-      // 获取当前用户信息
+      // 获取当前用户信息（同时验证 token 有效性）
       const userResult = await apiClient.get('/web/auth/user')
       if (userResult.success && userResult.user) {
         username.value = userResult.user.username
-      }
-
-      // 使用 dashboard 端点来验证 token
-      // 如果 token 无效，会抛出错误
-      const result = await apiClient.get('/admin/dashboard')
-      if (!result.success) {
+      } else {
+        // token 无效
         logout()
       }
     } catch (error) {

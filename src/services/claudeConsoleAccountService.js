@@ -158,7 +158,9 @@ class ClaudeConsoleAccountService {
   }
 
   // 📋 获取所有Claude Console账户
-  async getAllAccounts() {
+  // options.skipExtendedInfo: 跳过额外的 Redis 查询（并发计数等），用于 Dashboard 等只需要基本信息的场景
+  async getAllAccounts(options = {}) {
+    const { skipExtendedInfo = false } = options
     try {
       const client = redis.getClientSafe()
       const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
@@ -176,8 +178,10 @@ class ClaudeConsoleAccountService {
           // 获取限流状态信息
           const rateLimitInfo = this._getRateLimitInfo(accountData)
 
-          // 获取实时并发计数
-          const activeTaskCount = await redis.getConsoleAccountConcurrency(accountData.id)
+          // 获取实时并发计数（当 skipExtendedInfo 为 true 时跳过）
+          const activeTaskCount = skipExtendedInfo
+            ? 0
+            : await redis.getConsoleAccountConcurrency(accountData.id)
 
           accounts.push({
             id: accountData.id,
