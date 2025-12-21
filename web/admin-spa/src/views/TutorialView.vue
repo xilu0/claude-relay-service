@@ -409,7 +409,7 @@
                   $env:GEMINI_API_KEY = "你的API密钥"
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  $env:GEMINI_MODEL = "gemini-2.5-pro"
+                  $env:GEMINI_MODEL = "gemini-3-flash-preview"
                 </div>
               </div>
               <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-400">
@@ -440,8 +440,8 @@
                   [System.EnvironmentVariableTarget]::User)
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  [System.Environment]::SetEnvironmentVariable("GEMINI_MODEL", "gemini-2.5-pro",
-                  [System.EnvironmentVariableTarget]::User)
+                  [System.Environment]::SetEnvironmentVariable("GEMINI_MODEL",
+                  "gemini-3-flash-preview", [System.EnvironmentVariableTarget]::User)
                 </div>
               </div>
               <p class="mt-2 text-xs text-blue-700 dark:text-blue-300">
@@ -1051,7 +1051,7 @@
                   export GEMINI_API_KEY="你的API密钥"
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  export GEMINI_MODEL="gemini-2.5-pro"
+                  export GEMINI_MODEL="gemini-3-flash-preview"
                 </div>
               </div>
               <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-400">
@@ -1079,7 +1079,7 @@
                   echo 'export GEMINI_API_KEY="你的API密钥"' >> ~/.zshrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  echo 'export GEMINI_MODEL="gemini-2.5-pro"' >> ~/.zshrc
+                  echo 'export GEMINI_MODEL="gemini-3-flash-preview"' >> ~/.zshrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">source ~/.zshrc</div>
               </div>
@@ -1094,7 +1094,7 @@
                   echo 'export GEMINI_API_KEY="你的API密钥"' >> ~/.bash_profile
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  echo 'export GEMINI_MODEL="gemini-2.5-pro"' >> ~/.bash_profile
+                  echo 'export GEMINI_MODEL="gemini-3-flash-preview"' >> ~/.bash_profile
                 </div>
                 <div class="whitespace-nowrap text-gray-300">source ~/.bash_profile</div>
               </div>
@@ -1664,7 +1664,7 @@
                   export GEMINI_API_KEY="你的API密钥"
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  export GEMINI_MODEL="gemini-2.5-pro"
+                  export GEMINI_MODEL="gemini-3-flash-preview"
                 </div>
               </div>
               <p class="mt-2 text-xs text-yellow-700 dark:text-yellow-400">
@@ -1692,7 +1692,7 @@
                   echo 'export GEMINI_API_KEY="你的API密钥"' >> ~/.bashrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  echo 'export GEMINI_MODEL="gemini-2.5-pro"' >> ~/.bashrc
+                  echo 'export GEMINI_MODEL="gemini-3-flash-preview"' >> ~/.bashrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">source ~/.bashrc</div>
               </div>
@@ -1707,7 +1707,7 @@
                   echo 'export GEMINI_API_KEY="你的API密钥"' >> ~/.zshrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">
-                  echo 'export GEMINI_MODEL="gemini-2.5-pro"' >> ~/.zshrc
+                  echo 'export GEMINI_MODEL="gemini-3-flash-preview"' >> ~/.zshrc
                 </div>
                 <div class="whitespace-nowrap text-gray-300">source ~/.zshrc</div>
               </div>
