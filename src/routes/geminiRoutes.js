@@ -68,7 +68,7 @@ router.get('/usage', authenticateApiKey, handleUsage)
 router.get('/key-info', authenticateApiKey, handleKeyInfo)
 
 // ============================================================================
-// v1internal 独有路由（listExperiments）
+// v1internal 独有路由（listExperiments, retrieveUserQuota）
 // ============================================================================
 
 /**
@@ -79,6 +79,17 @@ router.post(
   '/v1internal\\:listExperiments',
   authenticateApiKey,
   handleSimpleEndpoint('listExperiments')
+)
+
+/**
+ * POST /v1internal:retrieveUserQuota
+ * 获取用户配额信息（Gemini CLI 使用此端点查询用户的模型配额和剩余额度）
+ * 返回包含各模型的 remainingFraction、resetTime 等配额信息
+ */
+router.post(
+  '/v1internal\\:retrieveUserQuota',
+  authenticateApiKey,
+  handleSimpleEndpoint('retrieveUserQuota')
 )
 
 /**
