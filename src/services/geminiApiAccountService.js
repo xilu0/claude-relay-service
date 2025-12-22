@@ -44,6 +44,7 @@ class GeminiApiAccountService {
       accountType = 'shared', // 'dedicated' or 'shared'
       schedulable = true, // 是否可被调度
       supportedModels = [], // 支持的模型列表
+      excludedModels = [], // 排除的模型列表（黑名单），Gemini API 默认不排除任何模型
       rateLimitDuration = 60 // 限流时间（分钟）
     } = options
 
@@ -70,6 +71,7 @@ class GeminiApiAccountService {
       accountType,
       schedulable: schedulable.toString(),
       supportedModels: JSON.stringify(supportedModels),
+      excludedModels: JSON.stringify(excludedModels), // 黑名单
 
       createdAt: new Date().toISOString(),
       lastUsedAt: '',
@@ -123,6 +125,17 @@ class GeminiApiAccountService {
       }
     }
 
+    // 解析 excludedModels（黑名单）
+    if (accountData.excludedModels) {
+      try {
+        accountData.excludedModels = JSON.parse(accountData.excludedModels)
+      } catch (e) {
+        accountData.excludedModels = []
+      }
+    } else {
+      accountData.excludedModels = []
+    }
+
     return accountData
   }
 
@@ -145,6 +158,11 @@ class GeminiApiAccountService {
 
     if (updates.supportedModels !== undefined) {
       updates.supportedModels = JSON.stringify(updates.supportedModels)
+    }
+
+    // 处理 excludedModels（黑名单）
+    if (updates.excludedModels !== undefined) {
+      updates.excludedModels = JSON.stringify(updates.excludedModels)
     }
 
     // 规范化 baseUrl
@@ -249,6 +267,17 @@ class GeminiApiAccountService {
               } catch (e) {
                 accountData.supportedModels = []
               }
+            }
+
+            // 解析 excludedModels（黑名单）
+            if (accountData.excludedModels) {
+              try {
+                accountData.excludedModels = JSON.parse(accountData.excludedModels)
+              } catch (e) {
+                accountData.excludedModels = []
+              }
+            } else {
+              accountData.excludedModels = []
             }
 
             // 获取限流状态信息

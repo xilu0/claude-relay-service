@@ -187,6 +187,21 @@ class UnifiedGeminiScheduler {
         if (boundAccount && boundAccount.isActive === 'true' && boundAccount.status !== 'error') {
           const isRateLimited = await this.isAccountRateLimited(accountId)
           if (!isRateLimited) {
+            // 检查模型黑名单
+            if (requestedModel && boundAccount.excludedModels?.length > 0) {
+              const normalizedModel = requestedModel.replace('models/', '')
+              if (
+                boundAccount.excludedModels.some(
+                  (model) => model.replace('models/', '') === normalizedModel
+                )
+              ) {
+                logger.warn(
+                  `⚠️ Bound Gemini-API account ${boundAccount.name} - model ${requestedModel} is blacklisted`
+                )
+                return availableAccounts
+              }
+            }
+
             // 检查模型支持
             if (
               requestedModel &&
@@ -234,6 +249,21 @@ class UnifiedGeminiScheduler {
         if (boundAccount && boundAccount.isActive === 'true' && boundAccount.status !== 'error') {
           const isRateLimited = await this.isAccountRateLimited(boundAccount.id)
           if (!isRateLimited) {
+            // 检查模型黑名单
+            if (requestedModel && boundAccount.excludedModels?.length > 0) {
+              const normalizedModel = requestedModel.replace('models/', '')
+              if (
+                boundAccount.excludedModels.some(
+                  (model) => model.replace('models/', '') === normalizedModel
+                )
+              ) {
+                logger.warn(
+                  `⚠️ Bound Gemini account ${boundAccount.name} - model ${requestedModel} is blacklisted`
+                )
+                return availableAccounts
+              }
+            }
+
             // 检查模型支持
             if (
               requestedModel &&
@@ -292,6 +322,19 @@ class UnifiedGeminiScheduler {
           continue
         }
 
+        // 检查模型黑名单
+        if (requestedModel && account.excludedModels?.length > 0) {
+          const normalizedModel = requestedModel.replace('models/', '')
+          if (
+            account.excludedModels.some((model) => model.replace('models/', '') === normalizedModel)
+          ) {
+            logger.debug(
+              `⏭️ Skipping Gemini account ${account.name} - model ${requestedModel} is blacklisted`
+            )
+            continue
+          }
+        }
+
         // 检查模型支持
         if (requestedModel && account.supportedModels && account.supportedModels.length > 0) {
           // 处理可能带有 models/ 前缀的模型名
@@ -331,6 +374,21 @@ class UnifiedGeminiScheduler {
           (account.accountType === 'shared' || !account.accountType) &&
           this._isSchedulable(account.schedulable)
         ) {
+          // 检查模型黑名单
+          if (requestedModel && account.excludedModels?.length > 0) {
+            const normalizedModel = requestedModel.replace('models/', '')
+            if (
+              account.excludedModels.some(
+                (model) => model.replace('models/', '') === normalizedModel
+              )
+            ) {
+              logger.debug(
+                `⏭️ Skipping Gemini-API account ${account.name} - model ${requestedModel} is blacklisted`
+              )
+              continue
+            }
+          }
+
           // 检查模型支持
           if (requestedModel && account.supportedModels && account.supportedModels.length > 0) {
             const normalizedModel = requestedModel.replace('models/', '')
@@ -653,6 +711,21 @@ class UnifiedGeminiScheduler {
             if (isExpired && !account.refreshToken) {
               logger.warn(
                 `⚠️ Gemini account ${account.name} in group token expired and no refresh token available`
+              )
+              continue
+            }
+          }
+
+          // 检查模型黑名单
+          if (requestedModel && account.excludedModels?.length > 0) {
+            const normalizedModel = requestedModel.replace('models/', '')
+            if (
+              account.excludedModels.some(
+                (model) => model.replace('models/', '') === normalizedModel
+              )
+            ) {
+              logger.debug(
+                `⏭️ Skipping ${accountType} account ${account.name} in group - model ${requestedModel} is blacklisted`
               )
               continue
             }

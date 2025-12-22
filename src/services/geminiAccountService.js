@@ -46,6 +46,22 @@ let _encryptionKeyCache = null
 // 🔄 解密结果缓存，提高解密性能
 const decryptCache = new LRUCache(500)
 
+/**
+ * 解析 supportedModels JSON 字符串
+ * @param {string|Array} value - 原始值
+ * @returns {Array} 解析后的数组
+ */
+function parseSupportedModels(value) {
+  if (value && typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch (e) {
+      return []
+    }
+  }
+  return value || []
+}
+
 // 生成加密密钥（使用与 claudeAccountService 相同的方法）
 function generateEncryptionKey() {
   if (!_encryptionKeyCache) {
@@ -413,8 +429,15 @@ async function createAccount(accountData) {
     // 临时项目 ID（从 loadCodeAssist 接口自动获取）
     tempProjectId: accountData.tempProjectId || '',
 
-    // 支持的模型列表（可选）
-    supportedModels: accountData.supportedModels || [], // 空数组表示支持所有模型
+    // 支持的模型列表（可选）- 使用 JSON 序列化存储
+    supportedModels: JSON.stringify(accountData.supportedModels || []), // 空数组表示支持所有模型
+
+    // 排除的模型列表（黑名单）- Gemini CLI 默认排除 gemini-3-pro-image-preview
+    excludedModels: JSON.stringify(
+      accountData.excludedModels !== undefined
+        ? accountData.excludedModels
+        : ['gemini-3-pro-image-preview']
+    ),
 
     // 时间戳
     createdAt: now,
@@ -477,6 +500,12 @@ async function getAccount(accountId) {
     }
   }
 
+  // 解析 supportedModels JSON 字符串
+  accountData.supportedModels = parseSupportedModels(accountData.supportedModels)
+
+  // 解析 excludedModels JSON 字符串（黑名单）
+  accountData.excludedModels = parseSupportedModels(accountData.excludedModels)
+
   // 转换 schedulable 字符串为布尔值（与 claudeConsoleAccountService 保持一致）
   accountData.schedulable = accountData.schedulable !== 'false' // 默认为true，只有明确设置为'false'才为false
 
@@ -506,6 +535,22 @@ async function updateAccount(accountId, updates) {
   // 处理 schedulable 字段，确保正确转换为字符串存储
   if (updates.schedulable !== undefined) {
     updates.schedulable = updates.schedulable.toString()
+  }
+
+  // 处理 supportedModels 字段，确保正确序列化为 JSON 字符串
+  if (updates.supportedModels !== undefined) {
+    updates.supportedModels =
+      typeof updates.supportedModels === 'string'
+        ? updates.supportedModels
+        : JSON.stringify(updates.supportedModels || [])
+  }
+
+  // 处理 excludedModels 字段（黑名单），确保正确序列化为 JSON 字符串
+  if (updates.excludedModels !== undefined) {
+    updates.excludedModels =
+      typeof updates.excludedModels === 'string'
+        ? updates.excludedModels
+        : JSON.stringify(updates.excludedModels || [])
   }
 
   // 加密敏感字段
@@ -669,6 +714,12 @@ async function getAllAccounts() {
 
       // 转换 schedulable 字符串为布尔值（与 getAccount 保持一致）
       accountData.schedulable = accountData.schedulable !== 'false' // 默认为true，只有明确设置为'false'才为false
+
+      // 解析 supportedModels JSON 字符串（与 getAccount 保持一致）
+      accountData.supportedModels = parseSupportedModels(accountData.supportedModels)
+
+      // 解析 excludedModels JSON 字符串（黑名单）
+      accountData.excludedModels = parseSupportedModels(accountData.excludedModels)
 
       const tokenExpiresAt = accountData.expiresAt || null
       const subscriptionExpiresAt =

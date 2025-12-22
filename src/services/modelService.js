@@ -8,6 +8,8 @@ const logger = require('../utils/logger')
 class ModelService {
   constructor() {
     this.supportedModels = this.getDefaultModels()
+    // Claude 模型元数据映射（用于 Anthropic 格式 API）
+    this.claudeModelMetadata = this.getClaudeModelMetadata()
   }
 
   /**
@@ -19,6 +21,90 @@ class ModelService {
       0
     )
     logger.success(`✅ Model service initialized with ${totalModels} models`)
+  }
+
+  /**
+   * 获取 Claude 模型元数据
+   * 用于 Anthropic 官方格式的 /v1/models API
+   */
+  getClaudeModelMetadata() {
+    return {
+      'claude-opus-4-5-20251101': {
+        display_name: 'Claude 4.5 Opus',
+        created_at: '2025-11-01T00:00:00Z'
+      },
+      'claude-haiku-4-5-20251001': {
+        display_name: 'Claude 4.5 Haiku',
+        created_at: '2025-10-01T00:00:00Z'
+      },
+      'claude-sonnet-4-5-20250929': {
+        display_name: 'Claude 4.5 Sonnet',
+        created_at: '2025-09-29T00:00:00Z'
+      }
+    }
+  }
+
+  /**
+   * 从模型 ID 中提取日期并生成 created_at
+   * @param {string} modelId - 模型 ID (如 claude-sonnet-4-20250514)
+   */
+  parseCreatedAtFromModelId(modelId) {
+    // 尝试匹配模型 ID 末尾的日期格式 YYYYMMDD
+    const dateMatch = modelId.match(/(\d{4})(\d{2})(\d{2})$/)
+    if (dateMatch) {
+      const [, year, month, day] = dateMatch
+      return `${year}-${month}-${day}T00:00:00Z`
+    }
+    // 如果没有匹配到日期，返回当前时间
+    return new Date().toISOString()
+  }
+
+  /**
+   * 从模型 ID 生成 display_name
+   * @param {string} modelId - 模型 ID
+   */
+  generateDisplayName(modelId) {
+    // 移除末尾的日期
+    const name = modelId.replace(/-\d{8}$/, '')
+    const parts = name.split('-')
+
+    if (parts[0] === 'claude' && parts.length >= 3) {
+      // 判断命名格式
+      const familyNames = ['opus', 'sonnet', 'haiku']
+      const secondPart = parts[1].toLowerCase()
+
+      if (familyNames.includes(secondPart)) {
+        // 新格式: claude-{family}-{version} 如 claude-sonnet-4-5
+        const family = parts[1].charAt(0).toUpperCase() + parts[1].slice(1)
+        const versionParts = parts.slice(2).filter((p) => /^\d+$/.test(p))
+        const version = versionParts.join('.')
+        return `Claude ${version} ${family}`
+      } else if (/^\d+$/.test(secondPart)) {
+        // 旧格式: claude-{version}-{family} 如 claude-3-5-sonnet
+        const versionParts = []
+        let familyIndex = -1
+        for (let i = 1; i < parts.length; i++) {
+          if (/^\d+$/.test(parts[i])) {
+            versionParts.push(parts[i])
+          } else {
+            familyIndex = i
+            break
+          }
+        }
+        const version = versionParts.join('.')
+        const family =
+          familyIndex >= 0
+            ? parts[familyIndex].charAt(0).toUpperCase() + parts[familyIndex].slice(1)
+            : ''
+        return `Claude ${version} ${family}`.trim()
+      }
+    }
+
+    // 默认：将连字符替换为空格，首字母大写
+    return name
+      .split('-')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
   }
 
   /**
@@ -58,7 +144,13 @@ class ModelService {
       gemini: {
         provider: 'google',
         description: 'Google Gemini models',
-        models: ['gemini-2.5-pro', 'gemini-3-pro-preview','gemini-3-flash-preview','gemini-2.5-flash']
+        models: [
+          'gemini-2.5-pro',
+          'gemini-3-pro-preview',
+          'gemini-3-pro-image-preview',
+          'gemini-3-flash-preview',
+          'gemini-2.5-flash'
+        ]
       }
     }
   }
@@ -88,6 +180,83 @@ class ModelService {
       }
       return a.id.localeCompare(b.id)
     })
+  }
+
+  /**
+   * 获取 Claude 模型列表（Anthropic 官方 API 格式）
+   * @param {Object} options - 分页选项
+   * @param {number} options.limit - 返回的最大模型数 (默认 20, 最大 100)
+   * @param {string} options.after_id - 返回此 ID 之后的模型
+   * @param {string} options.before_id - 返回此 ID 之前的模型
+   * @returns {Object} Anthropic 格式的模型列表响应
+   */
+  getClaudeModelsAnthropic(options = {}) {
+    const { limit = 20, after_id = null, before_id = null } = options
+    const maxLimit = Math.min(Math.max(1, limit), 100) // 限制在 1-100 之间
+
+    // 获取所有 Claude 模型并按 ID 排序
+    const claudeModels = this.supportedModels.claude.models
+      .map((modelId) => {
+        const metadata = this.claudeModelMetadata[modelId]
+        return {
+          id: modelId,
+          created_at: metadata?.created_at || this.parseCreatedAtFromModelId(modelId),
+          display_name: metadata?.display_name || this.generateDisplayName(modelId),
+          type: 'model'
+        }
+      })
+      .sort((a, b) => a.id.localeCompare(b.id))
+
+    // 应用分页过滤
+    let filteredModels = claudeModels
+    let startIndex = 0
+    let endIndex = claudeModels.length
+
+    if (after_id) {
+      const afterIndex = claudeModels.findIndex((m) => m.id === after_id)
+      if (afterIndex !== -1) {
+        startIndex = afterIndex + 1
+      }
+    }
+
+    if (before_id) {
+      const beforeIndex = claudeModels.findIndex((m) => m.id === before_id)
+      if (beforeIndex !== -1) {
+        endIndex = beforeIndex
+      }
+    }
+
+    filteredModels = claudeModels.slice(startIndex, endIndex)
+
+    // 应用 limit
+    const paginatedModels = filteredModels.slice(0, maxLimit)
+    const hasMore = filteredModels.length > maxLimit
+
+    return {
+      data: paginatedModels,
+      first_id: paginatedModels.length > 0 ? paginatedModels[0].id : null,
+      has_more: hasMore,
+      last_id: paginatedModels.length > 0 ? paginatedModels[paginatedModels.length - 1].id : null
+    }
+  }
+
+  /**
+   * 获取单个 Claude 模型信息（Anthropic 官方 API 格式）
+   * @param {string} modelId - 模型 ID
+   * @returns {Object|null} 模型信息或 null
+   */
+  getClaudeModelAnthropic(modelId) {
+    if (!this.supportedModels.claude.models.includes(modelId)) {
+      return null
+    }
+
+    const metadata = this.claudeModelMetadata[modelId]
+    return {
+      id: modelId,
+      created_at: metadata?.created_at || this.parseCreatedAtFromModelId(modelId),
+      display_name: metadata?.display_name || this.generateDisplayName(modelId),
+      type: 'model'
+    }
   }
 
   /**

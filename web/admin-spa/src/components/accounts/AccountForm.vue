@@ -2380,6 +2380,68 @@
             </p>
           </div>
 
+          <!-- Gemini 排除的模型配置（黑名单）- gemini 和 gemini-api 都支持 -->
+          <div v-if="form.platform === 'gemini' || form.platform === 'gemini-api'" class="mt-4">
+            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+              >排除的模型（黑名单）</label
+            >
+            <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+              选择要排除的模型。被排除的模型将不会使用此账户。
+            </p>
+            <!-- 预定义黑名单选项 -->
+            <div class="mb-3 flex flex-wrap gap-3">
+              <label
+                v-for="model in geminiBlacklistModels"
+                :key="model"
+                class="flex cursor-pointer items-center"
+              >
+                <input
+                  v-model="form.excludedModels"
+                  class="mr-2 text-red-600 focus:ring-red-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                  :value="model"
+                />
+                <span class="text-sm text-gray-700 dark:text-gray-300">{{ model }}</span>
+              </label>
+            </div>
+            <!-- 自定义黑名单模型输入 -->
+            <div class="flex gap-2">
+              <input
+                v-model="customExcludedModel"
+                class="form-input flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                placeholder="输入要排除的模型名称"
+                type="text"
+                @keyup.enter="addCustomExcludedModel"
+              />
+              <button
+                class="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700"
+                type="button"
+                @click="addCustomExcludedModel"
+              >
+                添加
+              </button>
+            </div>
+            <!-- 已选黑名单模型列表 -->
+            <div v-if="form.excludedModels.length > 0" class="mt-3">
+              <div class="flex flex-wrap gap-2">
+                <span
+                  v-for="model in form.excludedModels"
+                  :key="model"
+                  class="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-300"
+                >
+                  {{ model }}
+                  <button
+                    class="ml-1 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-200"
+                    type="button"
+                    @click="removeExcludedModel(model)"
+                  >
+                    <i class="fas fa-times text-xs" />
+                  </button>
+                </span>
+              </div>
+            </div>
+          </div>
+
           <!-- Claude 订阅类型选择（编辑模式） -->
           <div v-if="form.platform === 'claude'">
             <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
@@ -3730,6 +3792,14 @@ const form = ref({
     }
     return []
   })(),
+  excludedModels: (() => {
+    const models = props.account?.excludedModels
+    if (!models) return []
+    if (Array.isArray(models)) {
+      return models
+    }
+    return []
+  })(),
   userAgent: props.account?.userAgent || '',
   enableRateLimit: props.account ? props.account.rateLimitDuration > 0 : true,
   // 额度管理字段
@@ -3791,6 +3861,29 @@ const commonModels = [
   { value: 'Kimi', label: 'Kimi', color: 'pink' },
   { value: 'GLM', label: 'GLM', color: 'teal' }
 ]
+
+// Gemini 预定义黑名单模型
+const geminiBlacklistModels = ['gemini-3-pro-image-preview']
+
+// 自定义黑名单模型输入
+const customExcludedModel = ref('')
+
+// 添加自定义黑名单模型
+const addCustomExcludedModel = () => {
+  const model = customExcludedModel.value.trim()
+  if (model && !form.value.excludedModels.includes(model) && /^[a-z0-9._-]+$/i.test(model)) {
+    form.value.excludedModels.push(model)
+    customExcludedModel.value = ''
+  }
+}
+
+// 移除黑名单模型
+const removeExcludedModel = (model) => {
+  const index = form.value.excludedModels.indexOf(model)
+  if (index > -1) {
+    form.value.excludedModels.splice(index, 1)
+  }
+}
 
 // 模型映射表数据
 const modelMappings = ref([])
@@ -4253,6 +4346,10 @@ const handleOAuthSuccess = async (tokenInfo) => {
       }
       // 添加 Gemini 优先级
       data.priority = form.value.priority || 50
+      // 添加支持的模型列表
+      data.supportedModels = Array.isArray(form.value.supportedModels)
+        ? form.value.supportedModels
+        : []
     } else if (currentPlatform === 'openai') {
       data.openaiOauth = tokenInfo.tokens || tokenInfo
       data.accountInfo = tokenInfo.accountInfo
@@ -4578,6 +4675,10 @@ const createAccount = async () => {
 
       // 添加 Gemini 优先级
       data.priority = form.value.priority || 50
+      // 添加支持的模型列表
+      data.supportedModels = Array.isArray(form.value.supportedModels)
+        ? form.value.supportedModels
+        : []
     } else if (form.value.platform === 'openai') {
       // OpenAI手动模式需要构建openaiOauth对象
       const expiresInMs = form.value.refreshToken
@@ -4937,9 +5038,19 @@ const updateAccount = async () => {
       data.priority = form.value.priority || 50
     }
 
-    // Gemini 账号优先级更新
+    // Gemini 账号优先级和黑名单更新
     if (props.account.platform === 'gemini') {
       data.priority = form.value.priority || 50
+      data.excludedModels = Array.isArray(form.value.excludedModels)
+        ? form.value.excludedModels
+        : []
+    }
+
+    // Gemini API 账号黑名单更新
+    if (props.account.platform === 'gemini-api') {
+      data.excludedModels = Array.isArray(form.value.excludedModels)
+        ? form.value.excludedModels
+        : []
     }
 
     // Claude Console 特定更新
@@ -5545,6 +5656,14 @@ watch(
             return Object.keys(models)
           }
           // 处理数组格式（向后兼容）
+          if (Array.isArray(models)) {
+            return models
+          }
+          return []
+        })(),
+        excludedModels: (() => {
+          const models = newAccount.excludedModels
+          if (!models) return []
           if (Array.isArray(models)) {
             return models
           }

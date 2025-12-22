@@ -13,6 +13,7 @@ const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelH
 const sessionHelper = require('../utils/sessionHelper')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
+const modelService = require('../services/modelService')
 const router = express.Router()
 
 function queueRateLimitUpdate(
@@ -850,29 +851,84 @@ router.post('/v1/messages', authenticateApiKey, handleMessagesRequest)
 // 🚀 Claude API messages 端点 - /claude/v1/messages (别名)
 router.post('/claude/v1/messages', authenticateApiKey, handleMessagesRequest)
 
-// 📋 模型列表端点 - 支持 Claude, OpenAI, Gemini
+// 📋 模型列表端点 - Anthropic 官方 API 格式
+// GET /v1/models - 返回 Claude 模型列表（Anthropic 格式）
+// 支持分页参数: limit (默认 20, 最大 100), after_id, before_id
 router.get('/v1/models', authenticateApiKey, async (req, res) => {
   try {
-    const modelService = require('../services/modelService')
+    // 解析分页参数
+    const limit = parseInt(req.query.limit) || 20
+    const after_id = req.query.after_id || null
+    const before_id = req.query.before_id || null
 
-    // 从 modelService 获取所有支持的模型
-    const models = modelService.getAllModels()
+    // 获取 Anthropic 格式的模型列表
+    const result = modelService.getClaudeModelsAnthropic({
+      limit,
+      after_id,
+      before_id
+    })
 
     // 可选：根据 API Key 的模型限制过滤
-    let filteredModels = models
     if (req.apiKey.enableModelRestriction && req.apiKey.restrictedModels?.length > 0) {
-      filteredModels = models.filter((model) => req.apiKey.restrictedModels.includes(model.id))
+      result.data = result.data.filter((model) => req.apiKey.restrictedModels.includes(model.id))
+      // 更新分页信息
+      result.first_id = result.data.length > 0 ? result.data[0].id : null
+      result.last_id = result.data.length > 0 ? result.data[result.data.length - 1].id : null
     }
 
-    res.json({
-      object: 'list',
-      data: filteredModels
-    })
+    res.json(result)
   } catch (error) {
     logger.error('❌ Models list error:', error)
     res.status(500).json({
-      error: 'Failed to get models list',
-      message: error.message
+      type: 'error',
+      error: {
+        type: 'api_error',
+        message: 'Failed to get models list'
+      }
+    })
+  }
+})
+
+// 📋 单个模型端点 - Anthropic 官方 API 格式
+// GET /v1/models/:model_id - 返回单个 Claude 模型信息
+router.get('/v1/models/:model_id', authenticateApiKey, async (req, res) => {
+  try {
+    const { model_id } = req.params
+
+    // 检查模型访问权限
+    if (req.apiKey.enableModelRestriction && req.apiKey.restrictedModels?.length > 0) {
+      if (!req.apiKey.restrictedModels.includes(model_id)) {
+        return res.status(404).json({
+          type: 'error',
+          error: {
+            type: 'not_found_error',
+            message: `Model not found: ${model_id}`
+          }
+        })
+      }
+    }
+
+    const model = modelService.getClaudeModelAnthropic(model_id)
+
+    if (!model) {
+      return res.status(404).json({
+        type: 'error',
+        error: {
+          type: 'not_found_error',
+          message: `Model not found: ${model_id}`
+        }
+      })
+    }
+
+    res.json(model)
+  } catch (error) {
+    logger.error('❌ Get model error:', error)
+    res.status(500).json({
+      type: 'error',
+      error: {
+        type: 'api_error',
+        message: 'Failed to get model'
+      }
     })
   }
 })
