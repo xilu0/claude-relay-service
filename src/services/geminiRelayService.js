@@ -365,7 +365,7 @@ async function sendGeminiRequest({
   }
 }
 
-// 获取可用模型列表
+// 获取可用模型列表（OpenAI 格式）
 async function getAvailableModels(accessToken, proxy, projectId, location = 'us-central1') {
   let apiUrl
   if (projectId) {
@@ -421,6 +421,127 @@ async function getAvailableModels(accessToken, proxy, projectId, location = 'us-
         object: 'model',
         created: Date.now() / 1000,
         owned_by: 'google'
+      }
+    ]
+  }
+}
+
+// 获取可用模型列表（Google 官方格式）- 本地硬编码
+function getModelsGoogleFormat() {
+  // 直接返回本地硬编码的模型列表，无需透传到 Google API
+  return {
+    models: [
+      // Gemini 3 系列
+      {
+        name: 'models/gemini-3-pro-preview',
+        version: '001',
+        displayName: 'Gemini 3 Pro Preview',
+        description: 'Gemini 3 Pro preview model',
+        inputTokenLimit: 2097152,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      {
+        name: 'models/gemini-3-pro-image-preview',
+        version: '001',
+        displayName: 'Gemini 3 Pro Image Preview',
+        description: 'Gemini 3 Pro preview model with image generation capabilities',
+        inputTokenLimit: 2097152,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      {
+        name: 'models/gemini-3-flash-preview',
+        version: '001',
+        displayName: 'Gemini 3 Flash Preview',
+        description: 'Gemini 3 Flash preview model for fast inference',
+        inputTokenLimit: 1048576,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      // Gemini 2.5 系列
+      {
+        name: 'models/gemini-2.5-pro',
+        version: '001',
+        displayName: 'Gemini 2.5 Pro',
+        description: 'Gemini 2.5 Pro model',
+        inputTokenLimit: 2097152,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      {
+        name: 'models/gemini-2.5-flash',
+        version: '001',
+        displayName: 'Gemini 2.5 Flash',
+        description: 'Gemini 2.5 Flash model for fast inference',
+        inputTokenLimit: 1048576,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      // Gemini 2.0 系列
+      {
+        name: 'models/gemini-2.0-flash-exp',
+        version: '001',
+        displayName: 'Gemini 2.0 Flash Experimental',
+        description: 'Gemini 2.0 Flash experimental model',
+        inputTokenLimit: 1048576,
+        outputTokenLimit: 8192,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      {
+        name: 'models/gemini-2.0-flash-thinking-exp',
+        version: '001',
+        displayName: 'Gemini 2.0 Flash Thinking Experimental',
+        description: 'Gemini 2.0 Flash with thinking capabilities',
+        inputTokenLimit: 1048576,
+        outputTokenLimit: 65536,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      // Gemini 1.5 系列
+      {
+        name: 'models/gemini-1.5-pro',
+        version: '001',
+        displayName: 'Gemini 1.5 Pro',
+        description: 'Gemini 1.5 Pro model',
+        inputTokenLimit: 2097152,
+        outputTokenLimit: 8192,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
+      },
+      {
+        name: 'models/gemini-1.5-flash',
+        version: '001',
+        displayName: 'Gemini 1.5 Flash',
+        description: 'Gemini 1.5 Flash model for fast inference',
+        inputTokenLimit: 1048576,
+        outputTokenLimit: 8192,
+        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 40
       }
     ]
   }
@@ -560,6 +681,7 @@ async function countTokens({
 module.exports = {
   sendGeminiRequest,
   getAvailableModels,
+  getModelsGoogleFormat,
   convertMessagesToGemini,
   convertGeminiResponse,
   countTokens

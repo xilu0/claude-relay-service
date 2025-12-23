@@ -8,7 +8,11 @@
 const logger = require('../utils/logger')
 const geminiAccountService = require('../services/geminiAccountService')
 const geminiApiAccountService = require('../services/geminiApiAccountService')
-const { sendGeminiRequest, getAvailableModels } = require('../services/geminiRelayService')
+const {
+  sendGeminiRequest,
+  getAvailableModels,
+  getModelsGoogleFormat
+} = require('../services/geminiRelayService')
 const crypto = require('crypto')
 const sessionHelper = require('../utils/sessionHelper')
 const unifiedGeminiScheduler = require('../services/unifiedGeminiScheduler')
@@ -677,6 +681,30 @@ async function handleModels(req, res) {
       }
     })
   }
+  return undefined
+}
+
+/**
+ * 获取可用模型列表（Google 官方格式）
+ * 用于标准 Gemini API: /gemini/v1/models 和 /gemini/v1beta/models
+ * 直接返回本地硬编码的模型列表
+ */
+function handleModelsGoogleFormat(req, res) {
+  const apiKeyData = req.apiKey
+
+  // 检查权限
+  if (!checkPermissions(apiKeyData, 'gemini')) {
+    return res.status(403).json({
+      error: {
+        message: 'This API key does not have permission to access Gemini',
+        type: 'permission_denied'
+      }
+    })
+  }
+
+  // 返回本地硬编码的模型列表
+  const modelsResponse = getModelsGoogleFormat()
+  res.json(modelsResponse)
   return undefined
 }
 
@@ -2343,6 +2371,7 @@ module.exports = {
 
   // 模型相关处理函数
   handleModels,
+  handleModelsGoogleFormat,
   handleModelDetails,
 
   // 使用统计和 API Key 信息

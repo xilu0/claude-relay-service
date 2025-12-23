@@ -30,7 +30,7 @@ const {
   handleStreamGenerateContent,
   handleStandardGenerateContent,
   handleStandardStreamGenerateContent,
-  handleModels,
+  handleModelsGoogleFormat,
   handleModelDetails
 } = require('../handlers/geminiHandlers')
 
@@ -213,20 +213,20 @@ router.post(
 
 /**
  * GET /v1beta/models
- * 获取模型列表（v1beta 版本）
+ * 获取模型列表（v1beta 版本）- 返回 Google 官方格式
  */
 router.get('/v1beta/models', authenticateApiKey, ensureGeminiPermissionMiddleware, (req, res) => {
-  logger.info('Standard Gemini API models request (v1beta)')
-  handleModels(req, res)
+  logger.info('Standard Gemini API models request (v1beta) - Google format')
+  handleModelsGoogleFormat(req, res)
 })
 
 /**
  * GET /v1/models
- * 获取模型列表（v1 版本）
+ * 获取模型列表（v1 版本）- 返回 Google 官方格式
  */
 router.get('/v1/models', authenticateApiKey, ensureGeminiPermissionMiddleware, (req, res) => {
-  logger.info('Standard Gemini API models request (v1)')
-  handleModels(req, res)
+  logger.info('Standard Gemini API models request (v1) - Google format')
+  handleModelsGoogleFormat(req, res)
 })
 
 // ============================================================================

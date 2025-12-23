@@ -869,6 +869,203 @@ const handleResponses = async (req, res) => {
   }
 }
 
+// ============================================================================
+// 模型列表端点
+// ============================================================================
+
+/**
+ * GET /v1/models
+ * 获取 OpenAI Responses (Codex) 支持的模型列表
+ */
+router.get('/v1/models', authenticateApiKey, async (req, res) => {
+  try {
+    const apiKeyData = req.apiKey || {}
+
+    // 检查 OpenAI 权限
+    if (!checkOpenAIPermissions(apiKeyData)) {
+      return res.status(403).json({
+        error: {
+          message: 'This API key does not have permission to access OpenAI',
+          type: 'permission_denied',
+          code: 'permission_denied'
+        }
+      })
+    }
+
+    // OpenAI Responses (Codex) 支持的模型列表
+    const openaiModels = [
+      // GPT-5.2 系列（最新）
+      { id: 'gpt-5.2-2025-12-11', object: 'model', created: 1733875200, owned_by: 'openai' },
+      { id: 'gpt-5.2-codex', object: 'model', created: 1733875200, owned_by: 'openai' },
+      { id: 'gpt-5.2-codex-mini', object: 'model', created: 1733875200, owned_by: 'openai' },
+      { id: 'gpt-5.2-codex-max', object: 'model', created: 1733875200, owned_by: 'openai' },
+      // GPT-5.1 系列
+      { id: 'gpt-5.1-2025-11-13', object: 'model', created: 1731456000, owned_by: 'openai' },
+      { id: 'gpt-5.1-codex', object: 'model', created: 1731456000, owned_by: 'openai' },
+      { id: 'gpt-5.1-codex-mini', object: 'model', created: 1731456000, owned_by: 'openai' },
+      { id: 'gpt-5.1-codex-max', object: 'model', created: 1731456000, owned_by: 'openai' },
+      // GPT-5 系列
+      { id: 'gpt-5', object: 'model', created: 1723017600, owned_by: 'openai' },
+      { id: 'gpt-5-2025-08-07', object: 'model', created: 1723017600, owned_by: 'openai' },
+      { id: 'gpt-5-codex', object: 'model', created: 1723017600, owned_by: 'openai' },
+      // o 系列推理模型
+      { id: 'o3', object: 'model', created: 1702512000, owned_by: 'openai' },
+      { id: 'o3-mini', object: 'model', created: 1702512000, owned_by: 'openai' },
+      { id: 'o1', object: 'model', created: 1694649600, owned_by: 'openai' },
+      { id: 'o1-mini', object: 'model', created: 1694649600, owned_by: 'openai' },
+      { id: 'o1-preview', object: 'model', created: 1694649600, owned_by: 'openai' },
+      // GPT-4o 系列
+      { id: 'gpt-4o', object: 'model', created: 1715558400, owned_by: 'openai' },
+      { id: 'gpt-4o-2024-11-20', object: 'model', created: 1732060800, owned_by: 'openai' },
+      { id: 'gpt-4o-2024-08-06', object: 'model', created: 1722902400, owned_by: 'openai' },
+      { id: 'gpt-4o-2024-05-13', object: 'model', created: 1715558400, owned_by: 'openai' },
+      { id: 'gpt-4o-mini', object: 'model', created: 1721260800, owned_by: 'openai' },
+      { id: 'gpt-4o-mini-2024-07-18', object: 'model', created: 1721260800, owned_by: 'openai' },
+      // GPT-4 Turbo 系列
+      { id: 'gpt-4-turbo', object: 'model', created: 1712620800, owned_by: 'openai' },
+      { id: 'gpt-4-turbo-2024-04-09', object: 'model', created: 1712620800, owned_by: 'openai' },
+      { id: 'gpt-4-turbo-preview', object: 'model', created: 1706140800, owned_by: 'openai' },
+      // GPT-4 系列
+      { id: 'gpt-4', object: 'model', created: 1687392000, owned_by: 'openai' },
+      { id: 'gpt-4-0613', object: 'model', created: 1686614400, owned_by: 'openai' },
+      { id: 'gpt-4-32k', object: 'model', created: 1687392000, owned_by: 'openai' },
+      { id: 'gpt-4-32k-0613', object: 'model', created: 1686614400, owned_by: 'openai' },
+      // GPT-3.5 系列
+      { id: 'gpt-3.5-turbo', object: 'model', created: 1677609600, owned_by: 'openai' },
+      { id: 'gpt-3.5-turbo-0125', object: 'model', created: 1706140800, owned_by: 'openai' },
+      { id: 'gpt-3.5-turbo-1106', object: 'model', created: 1699228800, owned_by: 'openai' },
+      { id: 'gpt-3.5-turbo-16k', object: 'model', created: 1685577600, owned_by: 'openai' }
+    ]
+
+    // 应用模型黑名单过滤
+    let filteredModels = openaiModels
+    if (apiKeyData.modelBlacklist && Array.isArray(apiKeyData.modelBlacklist)) {
+      filteredModels = openaiModels.filter((model) => !apiKeyData.modelBlacklist.includes(model.id))
+    }
+
+    res.json({
+      object: 'list',
+      data: filteredModels
+    })
+  } catch (error) {
+    logger.error('Failed to get OpenAI models:', error)
+    res.status(500).json({
+      error: {
+        message: 'Failed to retrieve models',
+        type: 'api_error'
+      }
+    })
+  }
+})
+
+/**
+ * GET /v1/models/:model
+ * 获取单个模型详情
+ */
+router.get('/v1/models/:model', authenticateApiKey, async (req, res) => {
+  try {
+    const apiKeyData = req.apiKey || {}
+    const modelId = req.params.model
+
+    // 检查 OpenAI 权限
+    if (!checkOpenAIPermissions(apiKeyData)) {
+      return res.status(403).json({
+        error: {
+          message: 'This API key does not have permission to access OpenAI',
+          type: 'permission_denied',
+          code: 'permission_denied'
+        }
+      })
+    }
+
+    // 支持的模型列表 - 从模型ID查找created时间戳
+    const modelCreatedMap = {
+      // GPT-5.2 系列
+      'gpt-5.2-2025-12-11': 1733875200,
+      'gpt-5.2-codex': 1733875200,
+      'gpt-5.2-codex-mini': 1733875200,
+      'gpt-5.2-codex-max': 1733875200,
+      // GPT-5.1 系列
+      'gpt-5.1-2025-11-13': 1731456000,
+      'gpt-5.1-codex': 1731456000,
+      'gpt-5.1-codex-mini': 1731456000,
+      'gpt-5.1-codex-max': 1731456000,
+      // GPT-5 系列
+      'gpt-5': 1723017600,
+      'gpt-5-2025-08-07': 1723017600,
+      'gpt-5-codex': 1723017600,
+      // o 系列推理模型
+      o3: 1702512000,
+      'o3-mini': 1702512000,
+      o1: 1694649600,
+      'o1-mini': 1694649600,
+      'o1-preview': 1694649600,
+      // GPT-4o 系列
+      'gpt-4o': 1715558400,
+      'gpt-4o-2024-11-20': 1732060800,
+      'gpt-4o-2024-08-06': 1722902400,
+      'gpt-4o-2024-05-13': 1715558400,
+      'gpt-4o-mini': 1721260800,
+      'gpt-4o-mini-2024-07-18': 1721260800,
+      // GPT-4 Turbo 系列
+      'gpt-4-turbo': 1712620800,
+      'gpt-4-turbo-2024-04-09': 1712620800,
+      'gpt-4-turbo-preview': 1706140800,
+      // GPT-4 系列
+      'gpt-4': 1687392000,
+      'gpt-4-0613': 1686614400,
+      'gpt-4-32k': 1687392000,
+      'gpt-4-32k-0613': 1686614400,
+      // GPT-3.5 系列
+      'gpt-3.5-turbo': 1677609600,
+      'gpt-3.5-turbo-0125': 1706140800,
+      'gpt-3.5-turbo-1106': 1699228800,
+      'gpt-3.5-turbo-16k': 1685577600
+    }
+
+    const created = modelCreatedMap[modelId]
+    if (!created) {
+      return res.status(404).json({
+        error: {
+          message: `Model '${modelId}' not found`,
+          type: 'invalid_request_error',
+          code: 'model_not_found'
+        }
+      })
+    }
+
+    // 检查模型黑名单
+    if (apiKeyData.modelBlacklist && apiKeyData.modelBlacklist.includes(modelId)) {
+      return res.status(403).json({
+        error: {
+          message: `Model '${modelId}' is not available for this API key`,
+          type: 'permission_denied',
+          code: 'model_blacklisted'
+        }
+      })
+    }
+
+    res.json({
+      id: modelId,
+      object: 'model',
+      created,
+      owned_by: 'openai'
+    })
+  } catch (error) {
+    logger.error('Failed to get OpenAI model details:', error)
+    res.status(500).json({
+      error: {
+        message: 'Failed to retrieve model details',
+        type: 'api_error'
+      }
+    })
+  }
+})
+
+// ============================================================================
+// Responses 端点
+// ============================================================================
+
 // 注册两个路由路径，都使用相同的处理函数
 router.post('/responses', authenticateApiKey, handleResponses)
 router.post('/v1/responses', authenticateApiKey, handleResponses)

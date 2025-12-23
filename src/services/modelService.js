@@ -29,17 +29,18 @@ class ModelService {
    */
   getClaudeModelMetadata() {
     return {
+      // Claude 4.5 系列
       'claude-opus-4-5-20251101': {
         display_name: 'Claude 4.5 Opus',
         created_at: '2025-11-01T00:00:00Z'
       },
-      'claude-haiku-4-5-20251001': {
-        display_name: 'Claude 4.5 Haiku',
-        created_at: '2025-10-01T00:00:00Z'
-      },
       'claude-sonnet-4-5-20250929': {
         display_name: 'Claude 4.5 Sonnet',
         created_at: '2025-09-29T00:00:00Z'
+      },
+      'claude-haiku-4-5-20251001': {
+        display_name: 'Claude 4.5 Haiku',
+        created_at: '2025-10-01T00:00:00Z'
       }
     }
   }
@@ -116,39 +117,69 @@ class ModelService {
         provider: 'anthropic',
         description: 'Claude models from Anthropic',
         models: [
+          // Claude 4.5 系列
           'claude-opus-4-5-20251101',
-          'claude-haiku-4-5-20251001',
           'claude-sonnet-4-5-20250929',
-          'claude-opus-4-1-20250805',
-          'claude-sonnet-4-20250514',
-          'claude-opus-4-20250514',
-          'claude-3-7-sonnet-20250219',
-          'claude-3-5-sonnet-20241022',
-          'claude-3-5-haiku-20241022',
-          'claude-3-opus-20240229',
-          'claude-3-haiku-20240307'
+          'claude-haiku-4-5-20251001'
         ]
       },
       openai: {
         provider: 'openai',
         description: 'OpenAI GPT models',
         models: [
+          // GPT-5.2 系列（最新）
+          'gpt-5.2-2025-12-11',
+          'gpt-5.2-codex',
+          'gpt-5.2-codex-mini',
+          'gpt-5.2-codex-max',
+          // GPT-5.1 系列
           'gpt-5.1-2025-11-13',
-          'gpt-5.1-codex-mini',
           'gpt-5.1-codex',
+          'gpt-5.1-codex-mini',
           'gpt-5.1-codex-max',
+          // GPT-5 系列
+          'gpt-5',
           'gpt-5-2025-08-07',
-          'gpt-5-codex'
+          'gpt-5-codex',
+          // o 系列推理模型
+          'o3',
+          'o3-mini',
+          'o1',
+          'o1-mini',
+          'o1-preview',
+          // GPT-4o 系列
+          'gpt-4o',
+          'gpt-4o-2024-11-20',
+          'gpt-4o-2024-08-06',
+          'gpt-4o-2024-05-13',
+          'gpt-4o-mini',
+          'gpt-4o-mini-2024-07-18',
+          // GPT-4 Turbo 系列
+          'gpt-4-turbo',
+          'gpt-4-turbo-2024-04-09',
+          'gpt-4-turbo-preview',
+          // GPT-4 系列
+          'gpt-4',
+          'gpt-4-0613',
+          'gpt-4-32k',
+          'gpt-4-32k-0613',
+          // GPT-3.5 系列
+          'gpt-3.5-turbo',
+          'gpt-3.5-turbo-0125',
+          'gpt-3.5-turbo-1106',
+          'gpt-3.5-turbo-16k'
         ]
       },
       gemini: {
         provider: 'google',
         description: 'Google Gemini models',
         models: [
-          'gemini-2.5-pro',
+          // Gemini 3 系列
           'gemini-3-pro-preview',
           'gemini-3-pro-image-preview',
           'gemini-3-flash-preview',
+          // Gemini 2.5 系列
+          'gemini-2.5-pro',
           'gemini-2.5-flash'
         ]
       }
