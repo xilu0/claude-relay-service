@@ -927,6 +927,21 @@ class DroidAccountService {
       sanitizedUpdates.endpointType = this._sanitizeEndpointType(sanitizedUpdates.endpointType)
     }
 
+    // ✅ 当启用账户时（schedulable 或 isActive 设置为 true），自动重置错误状态
+    const isEnablingSchedulable =
+      sanitizedUpdates.schedulable !== undefined && this._isTruthy(sanitizedUpdates.schedulable)
+    const isEnablingActive =
+      sanitizedUpdates.isActive !== undefined && this._isTruthy(sanitizedUpdates.isActive)
+
+    if (isEnablingSchedulable || isEnablingActive) {
+      // 仅当当前状态为 error 时才重置，避免覆盖其他正常状态更新
+      if (account.status === 'error') {
+        sanitizedUpdates.status = 'active'
+        sanitizedUpdates.errorMessage = ''
+        logger.info(`🔄 Droid 账户 ${accountId} 启用时自动重置错误状态 -> active`)
+      }
+    }
+
     const parseProxyConfig = (value) => {
       if (!value) {
         return null

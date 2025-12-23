@@ -47,42 +47,12 @@ class DroidRelayService {
     return 'anthropic'
   }
 
-  _normalizeRequestBody(requestBody, endpointType) {
+  _normalizeRequestBody(requestBody) {
     if (!requestBody || typeof requestBody !== 'object') {
       return requestBody
     }
 
-    const normalizedBody = { ...requestBody }
-
-    if (endpointType === 'anthropic' && typeof normalizedBody.model === 'string') {
-      const originalModel = normalizedBody.model
-      const trimmedModel = originalModel.trim()
-      const lowerModel = trimmedModel.toLowerCase()
-
-      if (lowerModel.includes('haiku')) {
-        const mappedModel = 'claude-sonnet-4-20250514'
-        if (originalModel !== mappedModel) {
-          logger.info(`🔄 将请求模型从 ${originalModel} 映射为 ${mappedModel}`)
-        }
-        normalizedBody.model = mappedModel
-      }
-    }
-
-    if (endpointType === 'openai' && typeof normalizedBody.model === 'string') {
-      const originalModel = normalizedBody.model
-      const trimmedModel = originalModel.trim()
-      const lowerModel = trimmedModel.toLowerCase()
-
-      if (lowerModel === 'gpt-5') {
-        const mappedModel = 'gpt-5-2025-08-07'
-        if (originalModel !== mappedModel) {
-          logger.info(`🔄 将请求模型从 ${originalModel} 映射为 ${mappedModel}`)
-        }
-        normalizedBody.model = mappedModel
-      }
-    }
-
-    return normalizedBody
+    return { ...requestBody }
   }
 
   async _applyRateLimitTracking(rateLimitInfo, usageSummary, model, context = '') {
@@ -182,7 +152,7 @@ class DroidRelayService {
     const keyInfo = apiKeyData || {}
     const clientApiKeyId = keyInfo.id || null
     const normalizedEndpoint = this._normalizeEndpointType(endpointType)
-    const normalizedRequestBody = this._normalizeRequestBody(requestBody, normalizedEndpoint)
+    const normalizedRequestBody = this._normalizeRequestBody(requestBody)
     let account = null
     let selectedApiKey = null
     let accessToken = null
@@ -248,9 +218,15 @@ class DroidRelayService {
       // 处理请求体（注入 system prompt 等）
       const streamRequested = !disableStreaming && this._isStreamRequested(normalizedRequestBody)
 
+      // 检测是否是 Claude Code 客户端（User-Agent 包含 claude-cli 或 claude-code）
+      const userAgent = (clientHeaders['user-agent'] || '').toLowerCase()
+      const isClaudeCodeClient =
+        userAgent.includes('claude-cli') || userAgent.includes('claude-code')
+
       let processedBody = this._processRequestBody(normalizedRequestBody, normalizedEndpoint, {
         disableStreaming,
-        streamRequested
+        streamRequested,
+        isClaudeCodeClient
       })
 
       const extensionPayload = {
@@ -985,7 +961,11 @@ class DroidRelayService {
    * 处理请求体（注入 system prompt 等）
    */
   _processRequestBody(requestBody, endpointType, options = {}) {
-    const { disableStreaming = false, streamRequested = false } = options
+    const {
+      disableStreaming = false,
+      streamRequested = false,
+      isClaudeCodeClient = false
+    } = options
     const processedBody = { ...requestBody }
 
     const hasStreamField =
@@ -1005,11 +985,15 @@ class DroidRelayService {
       processedBody.stream = true
     }
 
-    // Anthropic 端点：仅注入系统提示
+    // Anthropic 端点：注入 Droid 系统提示
     if (endpointType === 'anthropic') {
       if (this.systemPrompt) {
         const promptBlock = { type: 'text', text: this.systemPrompt }
-        if (Array.isArray(processedBody.system)) {
+        // Claude Code 客户端：完全替换 system prompt（Factory.ai 会检测 Claude Code 特征并拒绝）
+        // 其他客户端：在前面追加 Droid 提示词
+        if (isClaudeCodeClient) {
+          processedBody.system = [promptBlock]
+        } else if (Array.isArray(processedBody.system)) {
           const hasPrompt = processedBody.system.some(
             (item) => item && item.type === 'text' && item.text === this.systemPrompt
           )
