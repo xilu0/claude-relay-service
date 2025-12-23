@@ -492,56 +492,6 @@ function getModelsGoogleFormat() {
         temperature: 1.0,
         topP: 0.95,
         topK: 40
-      },
-      // Gemini 2.0 系列
-      {
-        name: 'models/gemini-2.0-flash-exp',
-        version: '001',
-        displayName: 'Gemini 2.0 Flash Experimental',
-        description: 'Gemini 2.0 Flash experimental model',
-        inputTokenLimit: 1048576,
-        outputTokenLimit: 8192,
-        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-        temperature: 1.0,
-        topP: 0.95,
-        topK: 40
-      },
-      {
-        name: 'models/gemini-2.0-flash-thinking-exp',
-        version: '001',
-        displayName: 'Gemini 2.0 Flash Thinking Experimental',
-        description: 'Gemini 2.0 Flash with thinking capabilities',
-        inputTokenLimit: 1048576,
-        outputTokenLimit: 65536,
-        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-        temperature: 1.0,
-        topP: 0.95,
-        topK: 40
-      },
-      // Gemini 1.5 系列
-      {
-        name: 'models/gemini-1.5-pro',
-        version: '001',
-        displayName: 'Gemini 1.5 Pro',
-        description: 'Gemini 1.5 Pro model',
-        inputTokenLimit: 2097152,
-        outputTokenLimit: 8192,
-        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-        temperature: 1.0,
-        topP: 0.95,
-        topK: 40
-      },
-      {
-        name: 'models/gemini-1.5-flash',
-        version: '001',
-        displayName: 'Gemini 1.5 Flash',
-        description: 'Gemini 1.5 Flash model for fast inference',
-        inputTokenLimit: 1048576,
-        outputTokenLimit: 8192,
-        supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
-        temperature: 1.0,
-        topP: 0.95,
-        topK: 40
       }
     ]
   }
