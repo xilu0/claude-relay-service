@@ -248,3 +248,4 @@ web/apiStats/
 web/admin-spa/dist/
 scripts/test-api-key-query.js
 docs
+test.md

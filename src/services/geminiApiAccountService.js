@@ -228,10 +228,10 @@ class GeminiApiAccountService {
                 minutesRemaining: 0
               }
 
-          // 转换 schedulable 字段为布尔值
+          // 转换 schedulable 字段为布尔值（调度器的 _isSchedulable 支持布尔值）
           account.schedulable = account.schedulable !== 'false'
-          // 转换 isActive 字段为布尔值
-          account.isActive = account.isActive === 'true'
+          // 注意：不转换 isActive，保持字符串格式 'true'/'false'
+          // 因为调度器检查 account.isActive === 'true'（字符串比较）
 
           account.platform = account.platform || 'gemini-api'
 
@@ -296,10 +296,10 @@ class GeminiApiAccountService {
                   minutesRemaining: 0
                 }
 
-            // 转换 schedulable 字段为布尔值
+            // 转换 schedulable 字段为布尔值（调度器的 _isSchedulable 支持布尔值）
             accountData.schedulable = accountData.schedulable !== 'false'
-            // 转换 isActive 字段为布尔值
-            accountData.isActive = accountData.isActive === 'true'
+            // 注意：不转换 isActive，保持字符串格式 'true'/'false'
+            // 因为调度器检查 account.isActive === 'true'（字符串比较）
 
             accountData.platform = accountData.platform || 'gemini-api'
 
