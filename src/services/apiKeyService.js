@@ -727,8 +727,8 @@ class ApiKeyService {
         filterPermissions = 'all'
       } = options
 
-      // 1️⃣ 获取所有API Key的基本信息（轻量级查询）
-      let apiKeys = await redis.getAllApiKeys()
+      // 1️⃣ 获取所有API Key的基本信息（使用索引优化，O(1)性能）
+      let apiKeys = await redis.getAllApiKeysFromIndex()
       const client = redis.getClientSafe()
       const accountInfoCache = new Map()
 

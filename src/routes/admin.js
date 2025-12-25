@@ -5917,6 +5917,31 @@ router.post('/cleanup', authenticateAdmin, async (req, res) => {
   }
 })
 
+// 重建 API Key 索引（性能优化）
+router.post('/rebuild-apikey-index', authenticateAdmin, async (req, res) => {
+  try {
+    logger.info('🔧 Admin triggered API Key index rebuild')
+
+    const count = await redis.rebuildApiKeyIndex()
+
+    logger.success(`✅ API Key index rebuilt: ${count} keys indexed`)
+
+    return res.json({
+      success: true,
+      message: 'API Key index rebuilt successfully',
+      data: {
+        indexedCount: count
+      }
+    })
+  } catch (error) {
+    logger.error('❌ API Key index rebuild failed:', error)
+    return res.status(500).json({
+      error: 'Index rebuild failed',
+      message: error.message
+    })
+  }
+})
+
 // 获取使用趋势数据
 router.get('/usage-trend', authenticateAdmin, async (req, res) => {
   try {

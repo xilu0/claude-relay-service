@@ -156,6 +156,9 @@ class RedisClient {
 
     await client.hset(key, keyData)
     await client.expire(key, 86400 * 365) // 1年过期
+
+    // 同步更新索引（用于分页查询优化）
+    await this.updateApiKeyIndex(keyId, keyData)
   }
 
   async getApiKey(keyId) {
@@ -172,6 +175,9 @@ class RedisClient {
       // keyData.apiKey现在存储的是哈希值，直接从映射表删除
       await this.client.hdel('apikey:hash_map', keyData.apiKey)
     }
+
+    // 同步删除索引
+    await this.deleteApiKeyIndex(keyId)
 
     return await this.client.del(key)
   }
@@ -191,6 +197,87 @@ class RedisClient {
       }
     }
     return apiKeys
+  }
+
+  // 📇 API Key 索引相关操作（性能优化）
+  // 索引字段列表：用于分页查询的基本信息和排序字段
+  static INDEX_FIELDS = [
+    'name',
+    'description',
+    'isActive',
+    'createdAt',
+    'expiresAt',
+    'permissions',
+    'isDeleted',
+    'tags',
+    'userId',
+    'createdBy',
+    // 排序字段
+    'lastUsedAt',
+    'tokenLimit',
+    'concurrencyLimit'
+  ]
+
+  // 更新 API Key 索引
+  async updateApiKeyIndex(keyId, keyData) {
+    const indexData = {}
+    for (const field of RedisClient.INDEX_FIELDS) {
+      if (keyData[field] !== undefined) {
+        indexData[field] = keyData[field]
+      }
+    }
+    await this.client.hset('apikey:index', keyId, JSON.stringify(indexData))
+  }
+
+  // 删除 API Key 索引
+  async deleteApiKeyIndex(keyId) {
+    await this.client.hdel('apikey:index', keyId)
+  }
+
+  // 从索引获取所有 API Keys（O(1) 性能）
+  async getAllApiKeysFromIndex() {
+    const indexData = await this.client.hgetall('apikey:index')
+
+    // 降级：如果索引为空，回退到原有方式
+    if (!indexData || Object.keys(indexData).length === 0) {
+      logger.warn('⚠️ API Key 索引为空，回退到 scanKeys 方式')
+      return this.getAllApiKeys()
+    }
+
+    return Object.entries(indexData)
+      .map(([id, json]) => {
+        try {
+          return { id, ...JSON.parse(json) }
+        } catch {
+          // JSON 解析失败，跳过该条目
+          return null
+        }
+      })
+      .filter(Boolean)
+  }
+
+  // 重建所有 API Key 索引
+  async rebuildApiKeyIndex() {
+    // 先清理旧索引，避免残留脏数据
+    await this.client.del('apikey:index')
+
+    const keys = await this.scanKeys('apikey:*')
+    let count = 0
+
+    for (const key of keys) {
+      if (key === 'apikey:hash_map' || key === 'apikey:index') {
+        continue
+      }
+
+      const keyData = await this.client.hgetall(key)
+      if (keyData && Object.keys(keyData).length > 0) {
+        const keyId = key.replace('apikey:', '')
+        await this.updateApiKeyIndex(keyId, keyData)
+        count++
+      }
+    }
+
+    return count
   }
 
   // 🔍 通过哈希值查找API Key（性能优化）
