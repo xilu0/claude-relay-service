@@ -530,6 +530,12 @@ class ApiKeyService {
   // 🔧 辅助方法：丰富单个API Key的详细数据
   async _enrichApiKey(key, client, accountInfoCache) {
     try {
+      // 🔧 修复：从 Redis 获取完整数据，合并索引中缺失的字段（如限制、加油包等）
+      const fullKeyData = await redis.getApiKey(key.id)
+      if (fullKeyData && Object.keys(fullKeyData).length > 0) {
+        key = { ...fullKeyData, ...key }
+      }
+
       // 并行查询所有统计数据
       const [
         usage,
