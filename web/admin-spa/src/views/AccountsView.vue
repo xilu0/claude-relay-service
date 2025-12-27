@@ -348,7 +348,7 @@
                             <div class="flex items-start gap-2">
                               <i class="fas fa-clock mt-[2px] text-[10px] text-indigo-500"></i>
                               <span class="font-medium text-white dark:text-gray-900"
-                                >5h 窗口：5小时滑动窗口的使用率。</span
+                                >5h 窗口：5小时固定窗口的使用率。</span
                               >
                             </div>
                             <div class="flex items-start gap-2">
