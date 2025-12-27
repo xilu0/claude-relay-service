@@ -1216,6 +1216,14 @@ class ApiKeyService {
             const excessCost = costInfo.costs.total - allowedAmount
             if (excessCost > 0) {
               await redis.incrementDailyCost(keyId, excessCost)
+
+              // 记录周费用（修复：与 recordUsageWithDetails 保持一致）
+              const keyDataForWeekly = await redis.getApiKey(keyId)
+              const weeklyCostLimit = parseFloat(keyDataForWeekly?.weeklyCostLimit || 0)
+              if (weeklyCostLimit > 0) {
+                await redis.incrementWeeklyCost(keyId, excessCost)
+              }
+
               logger.database(
                 `💰 Excess cost to normal for ${keyId}: $${excessCost.toFixed(6)}, model: ${model}`
               )
@@ -1236,6 +1244,14 @@ class ApiKeyService {
         } else {
           // 正常费用，不使用加油包
           await redis.incrementDailyCost(keyId, costInfo.costs.total)
+
+          // 记录周费用（修复：与 recordUsageWithDetails 保持一致）
+          const keyDataForWeekly = await redis.getApiKey(keyId)
+          const weeklyCostLimit = parseFloat(keyDataForWeekly?.weeklyCostLimit || 0)
+          if (weeklyCostLimit > 0) {
+            await redis.incrementWeeklyCost(keyId, costInfo.costs.total)
+          }
+
           logger.database(
             `💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`
           )
