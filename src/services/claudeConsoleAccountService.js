@@ -165,61 +165,70 @@ class ClaudeConsoleAccountService {
       const client = redis.getClientSafe()
       const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
       const accounts = []
+      const ghostAccountIds = []
 
       for (const key of keys) {
         const accountData = await client.hgetall(key)
-        if (accountData && Object.keys(accountData).length > 0) {
-          if (!accountData.id) {
-            logger.warn(`⚠️ 检测到缺少ID的Claude Console账户数据，执行清理: ${key}`)
-            await client.del(key)
-            continue
-          }
 
-          // 获取限流状态信息
-          const rateLimitInfo = this._getRateLimitInfo(accountData)
-
-          // 获取实时并发计数（当 skipExtendedInfo 为 true 时跳过）
-          const activeTaskCount = skipExtendedInfo
-            ? 0
-            : await redis.getConsoleAccountConcurrency(accountData.id)
-
-          accounts.push({
-            id: accountData.id,
-            platform: accountData.platform,
-            name: accountData.name,
-            description: accountData.description,
-            apiUrl: accountData.apiUrl,
-            priority: parseInt(accountData.priority) || 50,
-            supportedModels: JSON.parse(accountData.supportedModels || '[]'),
-            userAgent: accountData.userAgent,
-            rateLimitDuration: Number.isNaN(parseInt(accountData.rateLimitDuration))
-              ? 60
-              : parseInt(accountData.rateLimitDuration),
-            isActive: accountData.isActive === 'true',
-            proxy: accountData.proxy ? JSON.parse(accountData.proxy) : null,
-            accountType: accountData.accountType || 'shared',
-            createdAt: accountData.createdAt,
-            lastUsedAt: accountData.lastUsedAt,
-            status: accountData.status || 'active',
-            errorMessage: accountData.errorMessage,
-            rateLimitInfo,
-            schedulable: accountData.schedulable !== 'false', // 默认为true，只有明确设置为false才不可调度
-
-            // ✅ 前端显示订阅过期时间（业务字段）
-            expiresAt: accountData.subscriptionExpiresAt || null,
-
-            // 额度管理相关
-            dailyQuota: parseFloat(accountData.dailyQuota || '0'),
-            dailyUsage: parseFloat(accountData.dailyUsage || '0'),
-            lastResetDate: accountData.lastResetDate || '',
-            quotaResetTime: accountData.quotaResetTime || '00:00',
-            quotaStoppedAt: accountData.quotaStoppedAt || null,
-
-            // 并发控制相关
-            maxConcurrentTasks: parseInt(accountData.maxConcurrentTasks) || 0,
-            activeTaskCount
-          })
+        // 🛡️ 使用统一的验证方法检测幽灵账户
+        if (!this.isValidAccountData(accountData)) {
+          const accountId = key.replace(this.ACCOUNT_KEY_PREFIX, '')
+          ghostAccountIds.push(accountId)
+          logger.warn(`⚠️ Detected ghost account with invalid data: ${accountId}`)
+          continue // 跳过无效账户
         }
+
+        // 获取限流状态信息
+        const rateLimitInfo = this._getRateLimitInfo(accountData)
+
+        // 获取实时并发计数（当 skipExtendedInfo 为 true 时跳过）
+        const activeTaskCount = skipExtendedInfo
+          ? 0
+          : await redis.getConsoleAccountConcurrency(accountData.id)
+
+        accounts.push({
+          id: accountData.id,
+          platform: accountData.platform,
+          name: accountData.name,
+          description: accountData.description,
+          apiUrl: accountData.apiUrl,
+          priority: parseInt(accountData.priority) || 50,
+          supportedModels: JSON.parse(accountData.supportedModels || '[]'),
+          userAgent: accountData.userAgent,
+          rateLimitDuration: Number.isNaN(parseInt(accountData.rateLimitDuration))
+            ? 60
+            : parseInt(accountData.rateLimitDuration),
+          isActive: accountData.isActive === 'true',
+          proxy: accountData.proxy ? JSON.parse(accountData.proxy) : null,
+          accountType: accountData.accountType || 'shared',
+          createdAt: accountData.createdAt,
+          lastUsedAt: accountData.lastUsedAt,
+          status: accountData.status || 'active',
+          errorMessage: accountData.errorMessage,
+          rateLimitInfo,
+          schedulable: accountData.schedulable !== 'false', // 默认为true，只有明确设置为false才不可调度
+
+          // ✅ 前端显示订阅过期时间（业务字段）
+          expiresAt: accountData.subscriptionExpiresAt || null,
+
+          // 额度管理相关
+          dailyQuota: parseFloat(accountData.dailyQuota || '0'),
+          dailyUsage: parseFloat(accountData.dailyUsage || '0'),
+          lastResetDate: accountData.lastResetDate || '',
+          quotaResetTime: accountData.quotaResetTime || '00:00',
+          quotaStoppedAt: accountData.quotaStoppedAt || null,
+
+          // 并发控制相关
+          maxConcurrentTasks: parseInt(accountData.maxConcurrentTasks) || 0,
+          activeTaskCount
+        })
+      }
+
+      // 🧹 在后台清理检测到的幽灵账户
+      if (ghostAccountIds.length > 0) {
+        this.cleanupGhostAccounts(ghostAccountIds).catch((err) => {
+          logger.error('Failed to cleanup ghost accounts:', err)
+        })
       }
 
       return accounts
@@ -458,6 +467,12 @@ class ClaudeConsoleAccountService {
   // 🚫 标记账号为限流状态
   async markAccountRateLimited(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to mark rate limited non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const account = await this.getAccount(accountId)
 
@@ -522,6 +537,12 @@ class ClaudeConsoleAccountService {
   // ✅ 移除账号的限流状态
   async removeAccountRateLimit(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to remove rate limit for non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const accountKey = `${this.ACCOUNT_KEY_PREFIX}${accountId}`
 
@@ -689,6 +710,12 @@ class ClaudeConsoleAccountService {
   // 🚫 标记账号为未授权状态（401错误）
   async markAccountUnauthorized(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to mark unauthorized non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const account = await this.getAccount(accountId)
 
@@ -735,6 +762,12 @@ class ClaudeConsoleAccountService {
   // 🚫 标记账号为临时封禁状态（400错误 - 账户临时禁用）
   async markConsoleAccountBlocked(accountId, errorDetails = '') {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to mark blocked non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const account = await this.getAccount(accountId)
 
@@ -801,6 +834,12 @@ class ClaudeConsoleAccountService {
   // ✅ 移除账号的临时封禁状态
   async removeAccountBlocked(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to remove blocked status for non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const accountKey = `${this.ACCOUNT_KEY_PREFIX}${accountId}`
 
@@ -912,6 +951,12 @@ class ClaudeConsoleAccountService {
   // 🚫 标记账号为过载状态（529错误）
   async markAccountOverloaded(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to mark overloaded non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
       const account = await this.getAccount(accountId)
 
@@ -954,6 +999,12 @@ class ClaudeConsoleAccountService {
   // ✅ 移除账号的过载状态
   async removeAccountOverload(accountId) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to remove overload status for non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
 
       await client.hdel(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, 'overloadedAt', 'overloadStatus')
@@ -1004,6 +1055,12 @@ class ClaudeConsoleAccountService {
   // 🚫 标记账号为封锁状态（模型不支持等原因）
   async blockAccount(accountId, reason) {
     try {
+      // 🛡️ 防止幽灵账户：先检查账户是否存在
+      if (!(await this.accountExists(accountId))) {
+        logger.warn(`⚠️ Attempted to block non-existent account: ${accountId}`)
+        return null
+      }
+
       const client = redis.getClientSafe()
 
       // 获取账户信息用于webhook通知
@@ -1040,6 +1097,41 @@ class ClaudeConsoleAccountService {
     } catch (error) {
       logger.error(`❌ Failed to block Claude Console account: ${accountId}`, error)
       throw error
+    }
+  }
+
+  // ✅ 检查账户是否存在且有效（防止幽灵账户创建）
+  async accountExists(accountId) {
+    try {
+      const client = redis.getClientSafe()
+      const accountData = await client.hgetall(`${this.ACCOUNT_KEY_PREFIX}${accountId}`)
+      return this.isValidAccountData(accountData)
+    } catch (error) {
+      logger.error(`❌ Failed to check account existence: ${accountId}`, error)
+      return false
+    }
+  }
+
+  // ✅ 验证账户数据是否有效（用于检测幽灵账户）
+  isValidAccountData(accountData) {
+    if (!accountData || Object.keys(accountData).length === 0) {
+      return false
+    }
+    // 必须包含核心字段才算有效账户
+    const requiredFields = ['id', 'name', 'apiUrl', 'apiKey']
+    return requiredFields.every((field) => accountData[field])
+  }
+
+  // 🧹 清理幽灵账户（后台执行）
+  async cleanupGhostAccounts(accountIds) {
+    const client = redis.getClientSafe()
+    for (const accountId of accountIds) {
+      try {
+        await client.del(`${this.ACCOUNT_KEY_PREFIX}${accountId}`)
+        logger.info(`🧹 Cleaned up ghost account: ${accountId}`)
+      } catch (error) {
+        logger.error(`❌ Failed to cleanup ghost account ${accountId}:`, error)
+      }
     }
   }
 
