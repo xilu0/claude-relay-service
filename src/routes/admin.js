@@ -6287,7 +6287,10 @@ router.get('/api-keys/:keyId/model-stats', authenticateAdmin, async (req, res) =
               outputTokens: 0,
               cacheCreateTokens: 0,
               cacheReadTokens: 0,
-              allTokens: 0
+              allTokens: 0,
+              // 媒体字段
+              outputImages: 0,
+              outputDurationSeconds: 0
             })
           }
 
@@ -6298,6 +6301,9 @@ router.get('/api-keys/:keyId/model-stats', authenticateAdmin, async (req, res) =
           stats.cacheCreateTokens += parseInt(data.cacheCreateTokens) || 0
           stats.cacheReadTokens += parseInt(data.cacheReadTokens) || 0
           stats.allTokens += parseInt(data.allTokens) || 0
+          // 累加媒体字段
+          stats.outputImages += parseInt(data.outputImages) || 0
+          stats.outputDurationSeconds += parseFloat(data.outputDurationSeconds) || 0
         }
       }
     }
@@ -6310,10 +6316,13 @@ router.get('/api-keys/:keyId/model-stats', authenticateAdmin, async (req, res) =
         input_tokens: stats.inputTokens,
         output_tokens: stats.outputTokens,
         cache_creation_input_tokens: stats.cacheCreateTokens,
-        cache_read_input_tokens: stats.cacheReadTokens
+        cache_read_input_tokens: stats.cacheReadTokens,
+        // 媒体字段
+        output_images: stats.outputImages,
+        output_duration_seconds: stats.outputDurationSeconds
       }
 
-      // 使用CostCalculator计算费用
+      // 使用CostCalculator计算费用（包含媒体费用）
       const costData = CostCalculator.calculateCost(usage, model)
 
       modelStats.push({
@@ -7292,7 +7301,10 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
                 inputTokens: 0,
                 outputTokens: 0,
                 cacheCreateTokens: 0,
-                cacheReadTokens: 0
+                cacheReadTokens: 0,
+                // 媒体字段
+                outputImages: 0,
+                outputDurationSeconds: 0
               })
             }
 
@@ -7301,6 +7313,9 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
             modelUsage.outputTokens += parseInt(data.outputTokens) || 0
             modelUsage.cacheCreateTokens += parseInt(data.cacheCreateTokens) || 0
             modelUsage.cacheReadTokens += parseInt(data.cacheReadTokens) || 0
+            // 累加媒体字段
+            modelUsage.outputImages += parseInt(data.outputImages) || 0
+            modelUsage.outputDurationSeconds += parseFloat(data.outputDurationSeconds) || 0
           }
         }
       }
@@ -7313,7 +7328,10 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
           input_tokens: usage.inputTokens,
           output_tokens: usage.outputTokens,
           cache_creation_input_tokens: usage.cacheCreateTokens,
-          cache_read_input_tokens: usage.cacheReadTokens
+          cache_read_input_tokens: usage.cacheReadTokens,
+          // 媒体字段
+          output_images: usage.outputImages,
+          output_duration_seconds: usage.outputDurationSeconds
         }
 
         const costResult = CostCalculator.calculateCost(usageData, model)
@@ -7399,7 +7417,10 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
                 inputTokens: 0,
                 outputTokens: 0,
                 cacheCreateTokens: 0,
-                cacheReadTokens: 0
+                cacheReadTokens: 0,
+                // 媒体字段
+                outputImages: 0,
+                outputDurationSeconds: 0
               })
             }
 
@@ -7408,6 +7429,9 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
             modelUsage.outputTokens += parseInt(data.outputTokens) || 0
             modelUsage.cacheCreateTokens += parseInt(data.cacheCreateTokens) || 0
             modelUsage.cacheReadTokens += parseInt(data.cacheReadTokens) || 0
+            // 累加媒体字段
+            modelUsage.outputImages += parseInt(data.outputImages) || 0
+            modelUsage.outputDurationSeconds += parseFloat(data.outputDurationSeconds) || 0
           }
         }
 
@@ -7419,7 +7443,10 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
             input_tokens: usage.inputTokens,
             output_tokens: usage.outputTokens,
             cache_creation_input_tokens: usage.cacheCreateTokens,
-            cache_read_input_tokens: usage.cacheReadTokens
+            cache_read_input_tokens: usage.cacheReadTokens,
+            // 媒体字段
+            output_images: usage.outputImages,
+            output_duration_seconds: usage.outputDurationSeconds
           }
 
           const costResult = CostCalculator.calculateCost(usageData, model)
@@ -7514,7 +7541,10 @@ router.get('/usage-costs', authenticateAdmin, async (req, res) => {
           input_tokens: parseInt(data.inputTokens) || 0,
           output_tokens: parseInt(data.outputTokens) || 0,
           cache_creation_input_tokens: parseInt(data.cacheCreateTokens) || 0,
-          cache_read_input_tokens: parseInt(data.cacheReadTokens) || 0
+          cache_read_input_tokens: parseInt(data.cacheReadTokens) || 0,
+          // 媒体字段
+          output_images: parseInt(data.outputImages) || 0,
+          output_duration_seconds: parseFloat(data.outputDurationSeconds) || 0
         }
 
         const costResult = CostCalculator.calculateCost(usage, model)

@@ -671,6 +671,139 @@ class RedisClient {
     return modelStatsMap
   }
 
+  // 🖼️ 记录媒体使用统计（图片、视频）
+  async incrementMediaUsage(
+    keyId,
+    inputImages = 0,
+    outputImages = 0,
+    outputDurationSeconds = 0,
+    model = 'unknown'
+  ) {
+    // Skip if no media usage
+    if (inputImages === 0 && outputImages === 0 && outputDurationSeconds === 0) {
+      return
+    }
+
+    const now = new Date()
+    const today = getDateStringInTimezone(now)
+    const tzDate = getDateInTimezone(now)
+    const currentMonth = `${tzDate.getUTCFullYear()}-${String(tzDate.getUTCMonth() + 1).padStart(
+      2,
+      '0'
+    )}`
+
+    const key = `usage:${keyId}`
+    const daily = `usage:daily:${keyId}:${today}`
+    const monthly = `usage:monthly:${keyId}:${currentMonth}`
+
+    // 标准化模型名用于统计聚合
+    const normalizedModel = this._normalizeModelName(model)
+
+    // 按模型统计的键
+    const modelDaily = `usage:model:daily:${normalizedModel}:${today}`
+    const modelMonthly = `usage:model:monthly:${normalizedModel}:${currentMonth}`
+
+    // API Key级别的模型统计
+    const keyModelDaily = `usage:${keyId}:model:daily:${normalizedModel}:${today}`
+    const keyModelMonthly = `usage:${keyId}:model:monthly:${normalizedModel}:${currentMonth}`
+
+    // 使用Pipeline优化性能
+    const pipeline = this.client.pipeline()
+
+    // API Key总体媒体统计
+    if (inputImages > 0) {
+      pipeline.hincrby(key, 'totalInputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(key, 'totalOutputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      // 使用 incrbyfloat 支持小数秒
+      pipeline.hincrbyfloat(key, 'totalOutputDurationSeconds', outputDurationSeconds)
+    }
+
+    // 每日媒体统计
+    if (inputImages > 0) {
+      pipeline.hincrby(daily, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(daily, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(daily, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // 每月媒体统计
+    if (inputImages > 0) {
+      pipeline.hincrby(monthly, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(monthly, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(monthly, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // 按模型统计 - 每日
+    if (inputImages > 0) {
+      pipeline.hincrby(modelDaily, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(modelDaily, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(modelDaily, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // 按模型统计 - 每月
+    if (inputImages > 0) {
+      pipeline.hincrby(modelMonthly, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(modelMonthly, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(modelMonthly, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // API Key级别的模型统计 - 每日
+    if (inputImages > 0) {
+      pipeline.hincrby(keyModelDaily, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(keyModelDaily, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(keyModelDaily, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // API Key级别的模型统计 - 每月
+    if (inputImages > 0) {
+      pipeline.hincrby(keyModelMonthly, 'inputImages', inputImages)
+    }
+    if (outputImages > 0) {
+      pipeline.hincrby(keyModelMonthly, 'outputImages', outputImages)
+    }
+    if (outputDurationSeconds > 0) {
+      pipeline.hincrbyfloat(keyModelMonthly, 'outputDurationSeconds', outputDurationSeconds)
+    }
+
+    // 设置过期时间（与 incrementTokenUsage 保持一致）
+    pipeline.expire(daily, 86400 * 32) // 32天过期
+    pipeline.expire(monthly, 86400 * 365) // 1年过期
+    pipeline.expire(modelDaily, 86400 * 32)
+    pipeline.expire(modelMonthly, 86400 * 365)
+    pipeline.expire(keyModelDaily, 86400 * 32)
+    pipeline.expire(keyModelMonthly, 86400 * 365)
+
+    // 执行Pipeline
+    await pipeline.exec()
+
+    logger.debug(
+      `🖼️ Recorded media usage for ${keyId}: inputImages=${inputImages}, outputImages=${outputImages}, videoDuration=${outputDurationSeconds}s, model=${model}`
+    )
+  }
+
   // 📊 记录账户级别的使用统计
   async incrementAccountUsage(
     accountId,
@@ -680,7 +813,11 @@ class RedisClient {
     cacheCreateTokens = 0,
     cacheReadTokens = 0,
     model = 'unknown',
-    isLongContextRequest = false
+    isLongContextRequest = false,
+    // 媒体使用字段
+    inputImages = 0,
+    outputImages = 0,
+    outputDurationSeconds = 0
   ) {
     const now = new Date()
     const today = getDateStringInTimezone(now)
@@ -779,6 +916,14 @@ class RedisClient {
       this.client.hincrby(accountModelDaily, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelDaily, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelDaily, 'requests', 1),
+      // 媒体使用字段 - 每日
+      this.client.hincrbyfloat(accountModelDaily, 'inputImages', inputImages || 0),
+      this.client.hincrbyfloat(accountModelDaily, 'outputImages', outputImages || 0),
+      this.client.hincrbyfloat(
+        accountModelDaily,
+        'outputDurationSeconds',
+        outputDurationSeconds || 0
+      ),
 
       // 账户按模型统计 - 每月
       this.client.hincrby(accountModelMonthly, 'inputTokens', finalInputTokens),
@@ -787,6 +932,14 @@ class RedisClient {
       this.client.hincrby(accountModelMonthly, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelMonthly, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelMonthly, 'requests', 1),
+      // 媒体使用字段 - 每月
+      this.client.hincrbyfloat(accountModelMonthly, 'inputImages', inputImages || 0),
+      this.client.hincrbyfloat(accountModelMonthly, 'outputImages', outputImages || 0),
+      this.client.hincrbyfloat(
+        accountModelMonthly,
+        'outputDurationSeconds',
+        outputDurationSeconds || 0
+      ),
 
       // 账户按模型统计 - 每小时
       this.client.hincrby(accountModelHourly, 'inputTokens', finalInputTokens),
@@ -795,6 +948,14 @@ class RedisClient {
       this.client.hincrby(accountModelHourly, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelHourly, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelHourly, 'requests', 1),
+      // 媒体使用字段 - 每小时
+      this.client.hincrbyfloat(accountModelHourly, 'inputImages', inputImages || 0),
+      this.client.hincrbyfloat(accountModelHourly, 'outputImages', outputImages || 0),
+      this.client.hincrbyfloat(
+        accountModelHourly,
+        'outputDurationSeconds',
+        outputDurationSeconds || 0
+      ),
 
       // 设置过期时间
       this.client.expire(accountDaily, 86400 * 32), // 32天过期
@@ -1474,12 +1635,18 @@ class RedisClient {
       // 获取该模型的使用数据
       const modelUsage = await this.client.hgetall(key)
 
-      if (modelUsage && (modelUsage.inputTokens || modelUsage.outputTokens)) {
+      if (
+        modelUsage &&
+        (modelUsage.inputTokens || modelUsage.outputTokens || modelUsage.outputImages)
+      ) {
         const usage = {
           input_tokens: parseInt(modelUsage.inputTokens || 0),
           output_tokens: parseInt(modelUsage.outputTokens || 0),
           cache_creation_input_tokens: parseInt(modelUsage.cacheCreateTokens || 0),
-          cache_read_input_tokens: parseInt(modelUsage.cacheReadTokens || 0)
+          cache_read_input_tokens: parseInt(modelUsage.cacheReadTokens || 0),
+          // 媒体使用字段
+          output_images: parseInt(modelUsage.outputImages || 0),
+          output_duration_seconds: parseFloat(modelUsage.outputDurationSeconds || 0)
         }
 
         // 使用CostCalculator计算费用
@@ -1487,7 +1654,7 @@ class RedisClient {
         totalCost += costResult.costs.total
 
         logger.debug(
-          `💰 Account ${accountId} daily cost for model ${model}: $${costResult.costs.total}`
+          `💰 Account ${accountId} daily cost for model ${model}: $${costResult.costs.total}, outputImages: ${usage.output_images}`
         )
       }
     }

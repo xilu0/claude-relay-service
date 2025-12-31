@@ -83,10 +83,18 @@ class CostCalculator {
    * @returns {Object} 费用详情
    */
   static calculateCost(usage, model = 'unknown') {
-    // 如果 usage 包含详细的 cache_creation 对象或是 1M 模型，使用 pricingService 来处理
+    // 如果 usage 包含详细的 cache_creation 对象或是 1M 模型或是媒体模型，使用 pricingService 来处理
+    // Also use pricingService for media billing fields
+    // 使用 !== undefined 检查，避免当值为 0 时被错误地判断为 false
+    const hasMediaFields =
+      usage.input_images !== undefined ||
+      usage.output_images !== undefined ||
+      usage.output_duration_seconds !== undefined ||
+      usage.image_resolution !== undefined
     if (
       (usage.cache_creation && typeof usage.cache_creation === 'object') ||
-      (model && model.includes('[1m]'))
+      (model && model.includes('[1m]')) ||
+      hasMediaFields
     ) {
       const result = pricingService.calculateCost(usage, model)
       // 转换 pricingService 返回的格式到 costCalculator 的格式
@@ -96,10 +104,21 @@ class CostCalculator {
           input: result.pricing.input * 1000000, // 转换为 per 1M tokens
           output: result.pricing.output * 1000000,
           cacheWrite: result.pricing.cacheCreate * 1000000,
-          cacheRead: result.pricing.cacheRead * 1000000
+          cacheRead: result.pricing.cacheRead * 1000000,
+          // Media pricing rates (already in USD, no conversion needed)
+          inputPerImage: result.pricing.inputPerImage || 0,
+          outputPerImage: result.pricing.outputPerImage || 0,
+          outputPerImageToken: (result.pricing.outputPerImageToken || 0) * 1000000,
+          inputPerPixel: result.pricing.inputPerPixel || 0,
+          outputPerPixel: result.pricing.outputPerPixel || 0,
+          outputPerSecond: result.pricing.outputPerSecond || 0
         },
         usingDynamicPricing: true,
         isLongContextRequest: result.isLongContextRequest || false,
+        // Media model flags
+        isImageModel: result.isImageModel || false,
+        isVideoModel: result.isVideoModel || false,
+        isMediaModel: result.isMediaModel || false,
         usage: {
           inputTokens: usage.input_tokens || 0,
           outputTokens: usage.output_tokens || 0,
@@ -109,13 +128,23 @@ class CostCalculator {
             (usage.input_tokens || 0) +
             (usage.output_tokens || 0) +
             (usage.cache_creation_input_tokens || 0) +
-            (usage.cache_read_input_tokens || 0)
+            (usage.cache_read_input_tokens || 0),
+          // Media usage fields
+          inputImages: usage.input_images || 0,
+          outputImages: usage.output_images || 0,
+          outputDurationSeconds: usage.output_duration_seconds || 0
         },
         costs: {
           input: result.inputCost,
           output: result.outputCost,
           cacheWrite: result.cacheCreateCost,
           cacheRead: result.cacheReadCost,
+          // Media costs
+          imageInput: result.imageInputCost || 0,
+          imageOutput: result.imageOutputCost || 0,
+          imageTotal: result.imageTotalCost || 0,
+          videoOutput: result.videoOutputCost || 0,
+          mediaTotal: result.mediaTotalCost || 0,
           total: result.totalCost
         },
         formatted: {
@@ -123,6 +152,12 @@ class CostCalculator {
           output: this.formatCost(result.outputCost),
           cacheWrite: this.formatCost(result.cacheCreateCost),
           cacheRead: this.formatCost(result.cacheReadCost),
+          // Media cost formatting
+          imageInput: this.formatCost(result.imageInputCost || 0),
+          imageOutput: this.formatCost(result.imageOutputCost || 0),
+          imageTotal: this.formatCost(result.imageTotalCost || 0),
+          videoOutput: this.formatCost(result.videoOutputCost || 0),
+          mediaTotal: this.formatCost(result.mediaTotalCost || 0),
           total: this.formatCost(result.totalCost)
         },
         debug: {
@@ -131,7 +166,11 @@ class CostCalculator {
           cacheCreateTokens: usage.cache_creation_input_tokens || 0,
           cacheWritePriceUsed: result.pricing.cacheCreate * 1000000,
           isLongContextModel: model && model.includes('[1m]'),
-          isLongContextRequest: result.isLongContextRequest || false
+          isLongContextRequest: result.isLongContextRequest || false,
+          // Media debug info
+          isImageModel: result.isImageModel || false,
+          isVideoModel: result.isVideoModel || false,
+          hasMediaCost: (result.mediaTotalCost || 0) > 0
         }
       }
     }

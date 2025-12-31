@@ -21,6 +21,167 @@ const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { parseSSELine } = require('../utils/sseParser')
 const axios = require('axios')
 const ProxyHelper = require('../utils/proxyHelper')
+const pricingService = require('../services/pricingService')
+
+// ============================================================================
+// 媒体解析工具函数
+// ============================================================================
+
+/**
+ * 从 Gemini 响应中解析图片数量
+ * Gemini API 返回图片在 candidates[].content.parts[].inlineData 中
+ * 注意: Gemini API 使用 camelCase (inlineData, mimeType)
+ * @param {Object} response - Gemini API 响应
+ * @returns {number} - 生成的图片数量
+ */
+function parseImageCountFromResponse(response) {
+  let imageCount = 0
+  try {
+    const candidates = response?.candidates || []
+    for (const candidate of candidates) {
+      const parts = candidate?.content?.parts || []
+      for (const part of parts) {
+        // 检查是否是图片数据 (inlineData with image mime type)
+        // Gemini API 使用 camelCase: inlineData, mimeType
+        const inlineData = part.inlineData || part.inline_data
+        const inlineMimeType = inlineData?.mimeType || inlineData?.mime_type
+        if (inlineData && inlineMimeType?.startsWith('image/')) {
+          imageCount++
+        }
+        // 也检查 fileData (用于较大的媒体文件)
+        const fileData = part.fileData || part.file_data
+        const fileMimeType = fileData?.mimeType || fileData?.mime_type
+        if (fileData && fileMimeType?.startsWith('image/')) {
+          imageCount++
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('⚠️ Failed to parse image count from response (may affect billing):', error.message)
+  }
+  // 边界验证：确保返回值有效且在合理范围内
+  const MAX_IMAGE_COUNT = 100 // 单次请求最大图片数量，超过视为异常
+  if (imageCount < 0 || !Number.isFinite(imageCount)) {
+    logger.warn(`⚠️ Invalid image count detected: ${imageCount}, resetting to 0`)
+    return 0
+  }
+  if (imageCount > MAX_IMAGE_COUNT) {
+    logger.warn(
+      `⚠️ Image count ${imageCount} exceeds maximum ${MAX_IMAGE_COUNT}, may indicate parsing error`
+    )
+  }
+  return imageCount
+}
+
+/**
+ * 从 Gemini 响应中解析视频时长（秒）
+ * Gemini Veo API 返回视频信息在响应元数据中
+ * 注意: Gemini API 可能使用 camelCase 或 snake_case
+ * @param {Object} response - Gemini API 响应
+ * @returns {number} - 视频时长（秒），如果没有视频则返回0
+ */
+function parseVideoDurationFromResponse(response) {
+  let durationSeconds = 0
+  try {
+    // 尝试从 usageMetadata 或响应元数据中获取视频时长
+    // Gemini Veo 可能在以下位置返回时长:
+    // 1. response.videoMetadata.durationSeconds / response.video_metadata.duration_seconds
+    // 2. response.metadata.duration
+    // 3. candidates[].content.parts[].videoMetadata.durationSeconds
+
+    // 检查顶级 videoMetadata (支持 camelCase 和 snake_case)
+    const videoMetadata = response?.videoMetadata || response?.video_metadata
+    const topLevelDuration = videoMetadata?.durationSeconds || videoMetadata?.duration_seconds
+    if (topLevelDuration) {
+      durationSeconds = parseFloat(topLevelDuration) || 0
+    }
+
+    // 检查 metadata.duration
+    if (!durationSeconds && response?.metadata?.duration) {
+      durationSeconds = parseFloat(response.metadata.duration) || 0
+    }
+
+    // 检查 candidates 中的 video 数据
+    if (!durationSeconds) {
+      const candidates = response?.candidates || []
+      for (const candidate of candidates) {
+        const parts = candidate?.content?.parts || []
+        for (const part of parts) {
+          // 检查视频元数据 (支持 camelCase 和 snake_case)
+          const partVideoMetadata = part.videoMetadata || part.video_metadata
+          const partDuration =
+            partVideoMetadata?.durationSeconds || partVideoMetadata?.duration_seconds
+          if (partDuration) {
+            durationSeconds = parseFloat(partDuration) || 0
+            break
+          }
+          // 检查 fileData 中的视频
+          const fileData = part.fileData || part.file_data
+          const fileMimeType = fileData?.mimeType || fileData?.mime_type
+          if (fileMimeType?.startsWith('video/')) {
+            // 如果有视频但没有时长信息，记录警告（影响计费）
+            if (!durationSeconds) {
+              logger.warn(
+                '⚠️ Video found in response but no duration metadata available (billing may be affected)'
+              )
+            }
+          }
+        }
+        if (durationSeconds > 0) {
+          break
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn(
+      '⚠️ Failed to parse video duration from response (may affect billing):',
+      error.message
+    )
+  }
+  // 边界验证：确保返回值有效且在合理范围内
+  const MAX_VIDEO_DURATION_SECONDS = 3600 // 最大1小时，超过视为异常
+  if (durationSeconds < 0 || !Number.isFinite(durationSeconds)) {
+    logger.warn(`⚠️ Invalid video duration detected: ${durationSeconds}, resetting to 0`)
+    return 0
+  }
+  if (durationSeconds > MAX_VIDEO_DURATION_SECONDS) {
+    logger.warn(
+      `⚠️ Video duration ${durationSeconds}s exceeds maximum ${MAX_VIDEO_DURATION_SECONDS}s, may indicate parsing error`
+    )
+  }
+  return durationSeconds
+}
+
+/**
+ * 检查模型是否为媒体生成模型并解析媒体指标
+ * @param {string} model - 模型名称
+ * @param {Object} response - Gemini API 响应
+ * @returns {Object} - { isMediaModel, outputImages, outputDurationSeconds }
+ */
+function parseMediaMetrics(model, response) {
+  const pricing = pricingService.getModelPricing(model)
+  const isImageModel = pricingService.isImageGenerationModel(pricing)
+  const isVideoModel = pricingService.isVideoGenerationModel(pricing)
+
+  let outputImages = 0
+  let outputDurationSeconds = 0
+
+  if (isImageModel) {
+    outputImages = parseImageCountFromResponse(response)
+  }
+
+  if (isVideoModel) {
+    outputDurationSeconds = parseVideoDurationFromResponse(response)
+  }
+
+  return {
+    isMediaModel: isImageModel || isVideoModel,
+    isImageModel,
+    isVideoModel,
+    outputImages,
+    outputDurationSeconds
+  }
+}
 
 // ============================================================================
 // 工具函数
@@ -439,16 +600,30 @@ async function handleMessages(req, res) {
 
           // 记录使用统计
           if (geminiData.usageMetadata) {
-            await apiKeyService.recordUsage(
+            // 解析媒体指标（图片/视频）
+            const mediaMetrics = parseMediaMetrics(model, geminiData)
+
+            await apiKeyService.recordUsageWithDetails(
               apiKeyData.id,
-              geminiData.usageMetadata.promptTokenCount || 0,
-              geminiData.usageMetadata.candidatesTokenCount || 0,
-              0,
-              0,
+              {
+                input_tokens: geminiData.usageMetadata.promptTokenCount || 0,
+                output_tokens: geminiData.usageMetadata.candidatesTokenCount || 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_images: mediaMetrics.outputImages,
+                output_duration_seconds: mediaMetrics.outputDurationSeconds
+              },
               model,
               accountId,
+              'gemini-api', // accountType
               apiKeyData.useBooster
             )
+
+            if (mediaMetrics.isMediaModel) {
+              logger.info(
+                `🖼️ Recorded Gemini media usage - Images: ${mediaMetrics.outputImages}, Video: ${mediaMetrics.outputDurationSeconds}s`
+              )
+            }
           }
         }
       } catch (error) {
@@ -526,15 +701,23 @@ async function handleMessages(req, res) {
 
           // 异步记录使用统计
           if (totalUsage.totalTokenCount > 0) {
+            // 解析媒体指标（流式响应中媒体通常不会内联传输，但我们仍需支持）
+            const mediaMetrics = parseMediaMetrics(model, { usageMetadata: totalUsage })
+
             apiKeyService
-              .recordUsage(
+              .recordUsageWithDetails(
                 apiKeyData.id,
-                totalUsage.promptTokenCount || 0,
-                totalUsage.candidatesTokenCount || 0,
-                0,
-                0,
+                {
+                  input_tokens: totalUsage.promptTokenCount || 0,
+                  output_tokens: totalUsage.candidatesTokenCount || 0,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0,
+                  output_images: mediaMetrics.outputImages,
+                  output_duration_seconds: mediaMetrics.outputDurationSeconds
+                },
                 model,
                 accountId,
+                'gemini-api',
                 apiKeyData.useBooster
               )
               .then(() => {
@@ -1228,19 +1411,33 @@ async function handleGenerateContent(req, res) {
     if (response?.response?.usageMetadata) {
       try {
         const usage = response.response.usageMetadata
-        await apiKeyService.recordUsage(
+        // 解析媒体指标（图片/视频）
+        const mediaMetrics = parseMediaMetrics(model, response.response)
+
+        await apiKeyService.recordUsageWithDetails(
           req.apiKey.id,
-          usage.promptTokenCount || 0,
-          usage.candidatesTokenCount || 0,
-          0,
-          0,
+          {
+            input_tokens: usage.promptTokenCount || 0,
+            output_tokens: usage.candidatesTokenCount || 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_images: mediaMetrics.outputImages,
+            output_duration_seconds: mediaMetrics.outputDurationSeconds
+          },
           model,
           account.id,
+          'gemini-oauth',
           req.apiKey.useBooster
         )
         logger.info(
           `📊 Recorded Gemini usage - Input: ${usage.promptTokenCount}, Output: ${usage.candidatesTokenCount}, Total: ${usage.totalTokenCount}`
         )
+
+        if (mediaMetrics.isMediaModel) {
+          logger.info(
+            `🖼️ Media metrics - Images: ${mediaMetrics.outputImages}, Video: ${mediaMetrics.outputDurationSeconds}s`
+          )
+        }
 
         await applyRateLimitTracking(
           req,
@@ -1526,15 +1723,23 @@ async function handleStreamGenerateContent(req, res) {
 
       // 异步记录使用统计
       if (!usageReported && totalUsage.totalTokenCount > 0) {
+        // 解析媒体指标
+        const mediaMetrics = parseMediaMetrics(model, { usageMetadata: totalUsage })
+
         Promise.all([
-          apiKeyService.recordUsage(
+          apiKeyService.recordUsageWithDetails(
             req.apiKey.id,
-            totalUsage.promptTokenCount || 0,
-            totalUsage.candidatesTokenCount || 0,
-            0,
-            0,
+            {
+              input_tokens: totalUsage.promptTokenCount || 0,
+              output_tokens: totalUsage.candidatesTokenCount || 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              output_images: mediaMetrics.outputImages,
+              output_duration_seconds: mediaMetrics.outputDurationSeconds
+            },
             model,
             account.id,
+            'gemini-oauth',
             req.apiKey.useBooster
           ),
           applyRateLimitTracking(
@@ -1848,19 +2053,33 @@ async function handleStandardGenerateContent(req, res) {
     if (response?.response?.usageMetadata) {
       try {
         const usage = response.response.usageMetadata
-        await apiKeyService.recordUsage(
+        // 解析媒体指标（图片/视频）
+        const mediaMetrics = parseMediaMetrics(model, response.response)
+
+        await apiKeyService.recordUsageWithDetails(
           req.apiKey.id,
-          usage.promptTokenCount || 0,
-          usage.candidatesTokenCount || 0,
-          0,
-          0,
+          {
+            input_tokens: usage.promptTokenCount || 0,
+            output_tokens: usage.candidatesTokenCount || 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_images: mediaMetrics.outputImages,
+            output_duration_seconds: mediaMetrics.outputDurationSeconds
+          },
           model,
           accountId,
+          'gemini-oauth',
           req.apiKey.useBooster
         )
         logger.info(
           `📊 Recorded Gemini usage - Input: ${usage.promptTokenCount}, Output: ${usage.candidatesTokenCount}, Total: ${usage.totalTokenCount}`
         )
+
+        if (mediaMetrics.isMediaModel) {
+          logger.info(
+            `🖼️ Media metrics - Images: ${mediaMetrics.outputImages}, Video: ${mediaMetrics.outputDurationSeconds}s`
+          )
+        }
       } catch (error) {
         logger.error('Failed to record Gemini usage:', error)
       }
@@ -2250,15 +2469,23 @@ async function handleStandardStreamGenerateContent(req, res) {
       res.end()
 
       if (totalUsage.totalTokenCount > 0) {
+        // 解析媒体指标
+        const mediaMetrics = parseMediaMetrics(model, { usageMetadata: totalUsage })
+
         apiKeyService
-          .recordUsage(
+          .recordUsageWithDetails(
             req.apiKey.id,
-            totalUsage.promptTokenCount || 0,
-            totalUsage.candidatesTokenCount || 0,
-            0,
-            0,
+            {
+              input_tokens: totalUsage.promptTokenCount || 0,
+              output_tokens: totalUsage.candidatesTokenCount || 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              output_images: mediaMetrics.outputImages,
+              output_duration_seconds: mediaMetrics.outputDurationSeconds
+            },
             model,
             accountId,
+            'gemini-oauth',
             req.apiKey.useBooster
           )
           .then(() => {

@@ -1427,6 +1427,11 @@ class ApiKeyService {
         ephemeral1hTokens = usageObject.cache_creation.ephemeral_1h_input_tokens || 0
       }
 
+      // 提取媒体使用数据（图片、视频）
+      const inputImages = usageObject.input_images || 0
+      const outputImages = usageObject.output_images || 0
+      const outputDurationSeconds = usageObject.output_duration_seconds || 0
+
       // 记录API Key级别的使用统计 - 这个必须执行
       await redis.incrementTokenUsage(
         keyId,
@@ -1441,7 +1446,21 @@ class ApiKeyService {
         costInfo.isLongContextRequest || false // 传递 1M 上下文请求标记
       )
 
+      // 记录媒体使用统计（如果有媒体使用）
+      if (inputImages > 0 || outputImages > 0 || outputDurationSeconds > 0) {
+        await redis.incrementMediaUsage(
+          keyId,
+          inputImages,
+          outputImages,
+          outputDurationSeconds,
+          model
+        )
+      }
+
       // 记录费用统计
+      logger.info(
+        `💰 Cost recording - keyId: ${keyId}, totalCost: $${costInfo.totalCost?.toFixed(6)}, mediaTotalCost: $${costInfo.mediaTotalCost?.toFixed(6)}, useBooster: ${useBooster}`
+      )
       if (costInfo.totalCost > 0) {
         // 检查是否使用加油包
         if (useBooster) {
@@ -1503,8 +1522,14 @@ class ApiKeyService {
           // 只在设置了周限制时才记录周成本（固定7天窗口）
           const keyDataForWeekly = await redis.getApiKey(keyId)
           const weeklyCostLimit = parseFloat(keyDataForWeekly?.weeklyCostLimit || 0)
+          logger.info(
+            `💰 Weekly cost check - keyId: ${keyId}, weeklyCostLimit: $${weeklyCostLimit}, totalCost: $${costInfo.totalCost.toFixed(6)}`
+          )
           if (weeklyCostLimit > 0) {
             await redis.incrementWeeklyCost(keyId, costInfo.totalCost)
+            logger.info(
+              `💰 Weekly cost recorded - keyId: ${keyId}, amount: $${costInfo.totalCost.toFixed(6)}`
+            )
           }
           logger.database(
             `💰 Recorded cost for ${keyId}: $${costInfo.totalCost.toFixed(6)}, model: ${model}`
@@ -1553,10 +1578,14 @@ class ApiKeyService {
             cacheCreateTokens,
             cacheReadTokens,
             model,
-            costInfo.isLongContextRequest || false
+            costInfo.isLongContextRequest || false,
+            // 媒体使用字段
+            inputImages,
+            outputImages,
+            outputDurationSeconds
           )
           logger.database(
-            `📊 Recorded account usage: ${accountId} - ${totalTokens} tokens (API Key: ${keyId})`
+            `📊 Recorded account usage: ${accountId} - ${totalTokens} tokens, outputImages: ${outputImages} (API Key: ${keyId})`
           )
         } else {
           logger.debug(
@@ -1577,6 +1606,10 @@ class ApiKeyService {
         ephemeral5mTokens,
         ephemeral1hTokens,
         totalTokens,
+        // 媒体使用字段
+        inputImages,
+        outputImages,
+        outputDurationSeconds,
         cost: Number((costInfo.totalCost || 0).toFixed(6)),
         costBreakdown: {
           input: costInfo.inputCost || 0,
@@ -1584,9 +1617,15 @@ class ApiKeyService {
           cacheCreate: costInfo.cacheCreateCost || 0,
           cacheRead: costInfo.cacheReadCost || 0,
           ephemeral5m: costInfo.ephemeral5mCost || 0,
-          ephemeral1h: costInfo.ephemeral1hCost || 0
+          ephemeral1h: costInfo.ephemeral1hCost || 0,
+          // 媒体费用
+          imageInput: costInfo.imageInputCost || 0,
+          imageOutput: costInfo.imageOutputCost || 0,
+          videoOutput: costInfo.videoOutputCost || 0,
+          mediaTotal: costInfo.mediaTotalCost || 0
         },
-        isLongContext: costInfo.isLongContextRequest || false
+        isLongContext: costInfo.isLongContextRequest || false,
+        isMediaModel: costInfo.isMediaModel || false
       }
 
       await redis.addUsageRecord(keyId, usageRecord)
@@ -1611,6 +1650,16 @@ class ApiKeyService {
         logParts.push(`Cache Read: ${cacheReadTokens}`)
       }
       logParts.push(`Total: ${totalTokens} tokens`)
+      // 添加媒体使用日志
+      if (inputImages > 0) {
+        logParts.push(`Input Images: ${inputImages}`)
+      }
+      if (outputImages > 0) {
+        logParts.push(`Output Images: ${outputImages}`)
+      }
+      if (outputDurationSeconds > 0) {
+        logParts.push(`Video Duration: ${outputDurationSeconds}s`)
+      }
 
       logger.database(`📊 Recorded usage: ${keyId} - ${logParts.join(', ')}`)
 

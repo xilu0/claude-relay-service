@@ -582,3 +582,10 @@ NEVER create files unless they're absolutely necessary for achieving your goal.
 ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (\*.md) or README files. Only create documentation files if explicitly requested by the User.
 ````
+
+## Active Technologies
+- Node.js 18+ + Express.js, ioredis, axios, winston (001-image-billing)
+- Redis (existing infrastructure) (001-image-billing)
+
+## Recent Changes
+- 001-image-billing: Added Node.js 18+ + Express.js, ioredis, axios, winston

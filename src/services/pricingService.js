@@ -496,6 +496,57 @@ class PricingService {
     return 0
   }
 
+  // ========== Media Billing Helper Functions ==========
+
+  /**
+   * Parse resolution string to pixel dimensions
+   * @param {string|null} resolution - Resolution string (e.g., "1024x1024")
+   * @returns {Object} Object with width, height, and total pixels
+   */
+  parseResolutionToPixels(resolution) {
+    if (!resolution || typeof resolution !== 'string') {
+      return { width: 0, height: 0, pixels: 0 }
+    }
+    const match = resolution.match(/^(\d+)x(\d+)$/)
+    if (!match) {
+      logger.debug(`💰 Invalid resolution format: ${resolution}`)
+      return { width: 0, height: 0, pixels: 0 }
+    }
+    const width = parseInt(match[1], 10)
+    const height = parseInt(match[2], 10)
+    return { width, height, pixels: width * height }
+  }
+
+  /**
+   * Check if pricing indicates a media generation model
+   * @param {Object|null} pricing - Pricing data object
+   * @returns {boolean} True if model is a media generation model
+   */
+  isMediaModel(pricing) {
+    if (!pricing || !pricing.mode) {
+      return false
+    }
+    return ['image_generation', 'video_generation', 'audio_generation'].includes(pricing.mode)
+  }
+
+  /**
+   * Check if pricing indicates an image generation model
+   * @param {Object|null} pricing - Pricing data object
+   * @returns {boolean} True if model is an image generation model
+   */
+  isImageGenerationModel(pricing) {
+    return pricing?.mode === 'image_generation'
+  }
+
+  /**
+   * Check if pricing indicates a video generation model
+   * @param {Object|null} pricing - Pricing data object
+   * @returns {boolean} True if model is a video generation model
+   */
+  isVideoGenerationModel(pricing) {
+    return pricing?.mode === 'video_generation'
+  }
+
   // 计算使用费用
   calculateCost(usage, modelName) {
     // 检查是否为 1M 上下文模型
@@ -531,6 +582,11 @@ class PricingService {
 
     const pricing = this.getModelPricing(modelName)
 
+    // Detect media model types
+    const isImageModel = this.isImageGenerationModel(pricing)
+    const isVideoModel = this.isVideoGenerationModel(pricing)
+    const isMediaModelFlag = isImageModel || isVideoModel
+
     if (!pricing && !useLongContextPricing) {
       return {
         inputCost: 0,
@@ -539,9 +595,33 @@ class PricingService {
         cacheReadCost: 0,
         ephemeral5mCost: 0,
         ephemeral1hCost: 0,
+        // Media cost fields
+        imageInputCost: 0,
+        imageOutputCost: 0,
+        imageTotalCost: 0,
+        videoOutputCost: 0,
+        mediaTotalCost: 0,
         totalCost: 0,
         hasPricing: false,
-        isLongContextRequest: false
+        isLongContextRequest: false,
+        // Media model flags
+        isImageModel: false,
+        isVideoModel: false,
+        isMediaModel: false,
+        pricing: {
+          input: 0,
+          output: 0,
+          cacheCreate: 0,
+          cacheRead: 0,
+          ephemeral1h: 0,
+          // Media pricing rates
+          inputPerImage: 0,
+          outputPerImage: 0,
+          outputPerImageToken: 0,
+          inputPerPixel: 0,
+          outputPerPixel: 0,
+          outputPerSecond: 0
+        }
       }
     }
 
@@ -598,6 +678,81 @@ class PricingService {
       ephemeral5mCost = cacheCreateCost
     }
 
+    // ========== Media Cost Calculation ==========
+    let imageInputCost = 0
+    let imageOutputCost = 0
+    let videoOutputCost = 0
+
+    // Image billing calculation
+    if (isImageModel) {
+      const inputImages = usage.input_images || 0
+      const outputImages = usage.output_images || 0
+      logger.info(
+        `🖼️ Image cost calculation for ${modelName}: isImageModel=${isImageModel}, outputImages=${outputImages}, output_cost_per_image=${pricing?.output_cost_per_image}`
+      )
+
+      // Calculate pixel counts if resolution is provided but pixel counts are not
+      let inputPixels = usage.input_pixels || 0
+      let outputPixels = usage.output_pixels || 0
+
+      if (usage.image_resolution && (!inputPixels || !outputPixels)) {
+        const parsed = this.parseResolutionToPixels(usage.image_resolution)
+        if (parsed.pixels > 0) {
+          if (!inputPixels && inputImages > 0) {
+            inputPixels = parsed.pixels * inputImages
+          }
+          if (!outputPixels && outputImages > 0) {
+            outputPixels = parsed.pixels * outputImages
+          }
+        }
+      }
+
+      // Image output cost calculation (priority: per-image → per-pixel → per-token)
+      if (pricing.output_cost_per_image && outputImages > 0) {
+        imageOutputCost = outputImages * pricing.output_cost_per_image
+      } else if (pricing.output_cost_per_pixel && outputPixels > 0) {
+        imageOutputCost = outputPixels * pricing.output_cost_per_pixel
+      } else if (pricing.output_cost_per_image_token && (usage.output_tokens || 0) > 0) {
+        // Token-based fallback for image output
+        imageOutputCost = (usage.output_tokens || 0) * pricing.output_cost_per_image_token
+      }
+
+      // Image input cost calculation (priority: per-image → per-pixel)
+      if (pricing.input_cost_per_image && inputImages > 0) {
+        imageInputCost = inputImages * pricing.input_cost_per_image
+      } else if (pricing.input_cost_per_pixel && inputPixels > 0) {
+        imageInputCost = inputPixels * pricing.input_cost_per_pixel
+      }
+
+      if (imageInputCost > 0 || imageOutputCost > 0) {
+        logger.debug(
+          `💰 Image billing for ${modelName}: input=${inputImages} images ($${imageInputCost.toFixed(6)}), output=${outputImages} images ($${imageOutputCost.toFixed(6)})`
+        )
+      }
+    }
+
+    // Video billing calculation
+    if (isVideoModel) {
+      const outputDurationSeconds = usage.output_duration_seconds || 0
+
+      if (pricing.output_cost_per_second && outputDurationSeconds > 0) {
+        // Use exact duration (no rounding) for fractional seconds support
+        videoOutputCost = outputDurationSeconds * pricing.output_cost_per_second
+
+        logger.debug(
+          `💰 Video billing for ${modelName}: duration=${outputDurationSeconds}s, cost=$${videoOutputCost.toFixed(6)}`
+        )
+      }
+    }
+
+    // Calculate media totals
+    const imageTotalCost = imageInputCost + imageOutputCost
+    const mediaTotalCost = imageTotalCost + videoOutputCost
+
+    // Calculate total cost including media
+    const tokenTotalCost = inputCost + outputCost + cacheCreateCost + cacheReadCost
+    const totalCost = tokenTotalCost + mediaTotalCost
+
     return {
       inputCost,
       outputCost,
@@ -605,9 +760,19 @@ class PricingService {
       cacheReadCost,
       ephemeral5mCost,
       ephemeral1hCost,
-      totalCost: inputCost + outputCost + cacheCreateCost + cacheReadCost,
+      // Media cost fields
+      imageInputCost,
+      imageOutputCost,
+      imageTotalCost,
+      videoOutputCost,
+      mediaTotalCost,
+      totalCost,
       hasPricing: true,
       isLongContextRequest,
+      // Media model flags
+      isImageModel,
+      isVideoModel,
+      isMediaModel: isMediaModelFlag,
       pricing: {
         input: useLongContextPricing
           ? (
@@ -623,7 +788,14 @@ class PricingService {
           : pricing?.output_cost_per_token || 0,
         cacheCreate: pricing?.cache_creation_input_token_cost || 0,
         cacheRead: pricing?.cache_read_input_token_cost || 0,
-        ephemeral1h: this.getEphemeral1hPricing(modelName)
+        ephemeral1h: this.getEphemeral1hPricing(modelName),
+        // Media pricing rates
+        inputPerImage: pricing?.input_cost_per_image || 0,
+        outputPerImage: pricing?.output_cost_per_image || 0,
+        outputPerImageToken: pricing?.output_cost_per_image_token || 0,
+        inputPerPixel: pricing?.input_cost_per_pixel || 0,
+        outputPerPixel: pricing?.output_cost_per_pixel || 0,
+        outputPerSecond: pricing?.output_cost_per_second || 0
       }
     }
   }

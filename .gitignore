@@ -249,3 +249,6 @@ web/admin-spa/dist/
 scripts/test-api-key-query.js
 docs
 test.md
+*.png
+response.json
+scripts/query-api-keys.js
