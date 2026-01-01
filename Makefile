@@ -276,7 +276,7 @@ update-docker-env:
 	cp .env ${HOME}/service/claude-relay/
 
 restart-claude-relay: 
-	ssh cc "cd /home/ubuntu/cc-club && docker compose up --pull always -d claude-relay"
+	ssh cc2 "cd /home/ubuntu/cc-club && docker compose up --pull always -d claude-relay"
 
 update: build-docker restart-claude-relay
 
