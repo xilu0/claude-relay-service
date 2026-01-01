@@ -54,6 +54,29 @@ class ClaudeAccountService {
     )
   }
 
+  /**
+   * 🛡️ 获取并验证账户数据（防止幽灵账户）
+   * @param {string} accountId
+   * @returns {Promise<Object|null>} 验证通过的账户数据，或 null
+   */
+  async getVerifiedAccount(accountId) {
+    try {
+      const accountData = await redis.getClaudeAccount(accountId)
+      if (
+        accountData &&
+        Object.keys(accountData).length > 0 &&
+        accountData.id &&
+        accountData.name
+      ) {
+        return accountData
+      }
+      return null
+    } catch (error) {
+      logger.error(`Error verifying account existence: ${accountId}`, error)
+      return null
+    }
+  }
+
   // 🏢 创建Claude账户
   async createAccount(options = {}) {
     const {
@@ -364,8 +387,8 @@ class ClaudeAccountService {
         throw new Error(`Token refresh failed with status: ${response.status}`)
       }
     } catch (error) {
-      // 记录刷新失败
-      const accountData = await redis.getClaudeAccount(accountId)
+      // 🛡️ 防止幽灵账户：使用验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
       if (accountData) {
         logRefreshError(accountId, accountData.name, 'claude', error)
         accountData.status = 'error'
@@ -386,6 +409,8 @@ class ClaudeAccountService {
         } catch (webhookError) {
           logger.error('Failed to send webhook notification:', webhookError)
         }
+      } else {
+        logger.warn(`⚠️ Skipping error handling for non-existent account: ${accountId}`)
       }
 
       logger.error(`❌ Failed to refresh token for account ${accountId}:`, error)
@@ -1284,9 +1309,11 @@ class ClaudeAccountService {
   // 🚫 标记账号为限流状态
   async markAccountRateLimited(accountId, sessionHash = null, rateLimitResetTimestamp = null) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
-      if (!accountData || Object.keys(accountData).length === 0) {
-        throw new Error('Account not found')
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
+      if (!accountData) {
+        logger.warn(`⚠️ Attempted to mark rate limit for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       // 设置限流状态和时间
@@ -1487,9 +1514,11 @@ class ClaudeAccountService {
   // ✅ 移除账号的限流状态
   async removeAccountRateLimit(accountId) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
-      if (!accountData || Object.keys(accountData).length === 0) {
-        throw new Error('Account not found')
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
+      if (!accountData) {
+        logger.warn(`⚠️ Attempted to remove rate limit for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       const accountKey = `claude:account:${accountId}`
@@ -2320,9 +2349,11 @@ class ClaudeAccountService {
         throw new Error(`Unsupported error type: ${errorType}`)
       }
 
-      const accountData = await redis.getClaudeAccount(accountId)
-      if (!accountData || Object.keys(accountData).length === 0) {
-        throw new Error('Account not found')
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
+      if (!accountData) {
+        logger.warn(`⚠️ Attempted to mark error for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       // 更新账户状态
@@ -2381,9 +2412,11 @@ class ClaudeAccountService {
   // 🔄 重置账户所有异常状态
   async resetAccountStatus(accountId) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
-      if (!accountData || Object.keys(accountData).length === 0) {
-        throw new Error('Account not found')
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
+      if (!accountData) {
+        logger.warn(`⚠️ Attempted to reset status for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       // 重置账户状态
@@ -2585,9 +2618,11 @@ class ClaudeAccountService {
   // 标记账号为临时错误状态
   async markAccountTempError(accountId, sessionHash = null) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
-      if (!accountData || Object.keys(accountData).length === 0) {
-        throw new Error('Account not found')
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
+      if (!accountData) {
+        logger.warn(`⚠️ Attempted to mark temp error for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       // 更新账户状态
@@ -2794,9 +2829,11 @@ class ClaudeAccountService {
   // 🚫 标记账号为过载状态（529错误）
   async markAccountOverloaded(accountId) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
       if (!accountData) {
-        throw new Error('Account not found')
+        logger.warn(`⚠️ Attempted to mark overloaded for non-existent account: ${accountId}`)
+        return { success: false, error: 'Account not found' }
       }
 
       // 获取配置的过载处理时间（分钟）
@@ -2870,9 +2907,11 @@ class ClaudeAccountService {
   // 🔄 移除账号的过载状态
   async removeAccountOverload(accountId) {
     try {
-      const accountData = await redis.getClaudeAccount(accountId)
+      // 🛡️ 防止幽灵账户：获取验证后的账户数据
+      const accountData = await this.getVerifiedAccount(accountId)
       if (!accountData) {
-        throw new Error('Account not found')
+        logger.warn(`⚠️ Attempted to remove overload for non-existent account: ${accountId}`)
+        return { success: true } // 幂等操作：账户不存在时视为已成功移除
       }
 
       const overloadKey = `account:overload:${accountId}`
