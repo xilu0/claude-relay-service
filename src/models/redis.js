@@ -916,14 +916,22 @@ class RedisClient {
       this.client.hincrby(accountModelDaily, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelDaily, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelDaily, 'requests', 1),
-      // 媒体使用字段 - 每日
-      this.client.hincrbyfloat(accountModelDaily, 'inputImages', inputImages || 0),
-      this.client.hincrbyfloat(accountModelDaily, 'outputImages', outputImages || 0),
-      this.client.hincrbyfloat(
-        accountModelDaily,
-        'outputDurationSeconds',
-        outputDurationSeconds || 0
-      ),
+      // 媒体使用字段 - 每日 (只在有值时写入，避免写入0)
+      ...(inputImages > 0
+        ? [this.client.hincrbyfloat(accountModelDaily, 'inputImages', inputImages)]
+        : []),
+      ...(outputImages > 0
+        ? [this.client.hincrbyfloat(accountModelDaily, 'outputImages', outputImages)]
+        : []),
+      ...(outputDurationSeconds > 0
+        ? [
+            this.client.hincrbyfloat(
+              accountModelDaily,
+              'outputDurationSeconds',
+              outputDurationSeconds
+            )
+          ]
+        : []),
 
       // 账户按模型统计 - 每月
       this.client.hincrby(accountModelMonthly, 'inputTokens', finalInputTokens),
@@ -932,14 +940,22 @@ class RedisClient {
       this.client.hincrby(accountModelMonthly, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelMonthly, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelMonthly, 'requests', 1),
-      // 媒体使用字段 - 每月
-      this.client.hincrbyfloat(accountModelMonthly, 'inputImages', inputImages || 0),
-      this.client.hincrbyfloat(accountModelMonthly, 'outputImages', outputImages || 0),
-      this.client.hincrbyfloat(
-        accountModelMonthly,
-        'outputDurationSeconds',
-        outputDurationSeconds || 0
-      ),
+      // 媒体使用字段 - 每月 (只在有值时写入，避免写入0)
+      ...(inputImages > 0
+        ? [this.client.hincrbyfloat(accountModelMonthly, 'inputImages', inputImages)]
+        : []),
+      ...(outputImages > 0
+        ? [this.client.hincrbyfloat(accountModelMonthly, 'outputImages', outputImages)]
+        : []),
+      ...(outputDurationSeconds > 0
+        ? [
+            this.client.hincrbyfloat(
+              accountModelMonthly,
+              'outputDurationSeconds',
+              outputDurationSeconds
+            )
+          ]
+        : []),
 
       // 账户按模型统计 - 每小时
       this.client.hincrby(accountModelHourly, 'inputTokens', finalInputTokens),
@@ -948,14 +964,22 @@ class RedisClient {
       this.client.hincrby(accountModelHourly, 'cacheReadTokens', finalCacheReadTokens),
       this.client.hincrby(accountModelHourly, 'allTokens', actualTotalTokens),
       this.client.hincrby(accountModelHourly, 'requests', 1),
-      // 媒体使用字段 - 每小时
-      this.client.hincrbyfloat(accountModelHourly, 'inputImages', inputImages || 0),
-      this.client.hincrbyfloat(accountModelHourly, 'outputImages', outputImages || 0),
-      this.client.hincrbyfloat(
-        accountModelHourly,
-        'outputDurationSeconds',
-        outputDurationSeconds || 0
-      ),
+      // 媒体使用字段 - 每小时 (只在有值时写入，避免写入0)
+      ...(inputImages > 0
+        ? [this.client.hincrbyfloat(accountModelHourly, 'inputImages', inputImages)]
+        : []),
+      ...(outputImages > 0
+        ? [this.client.hincrbyfloat(accountModelHourly, 'outputImages', outputImages)]
+        : []),
+      ...(outputDurationSeconds > 0
+        ? [
+            this.client.hincrbyfloat(
+              accountModelHourly,
+              'outputDurationSeconds',
+              outputDurationSeconds
+            )
+          ]
+        : []),
 
       // 设置过期时间
       this.client.expire(accountDaily, 86400 * 32), // 32天过期
