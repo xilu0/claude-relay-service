@@ -42,8 +42,8 @@ jobs:
             echo "tags=${{ env.IMAGE_NAME }}:${VERSION},${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
             echo "version=${VERSION}" >> $GITHUB_OUTPUT
           else
-            # Branch push: use date tag only (no latest)
-            echo "tags=${{ env.IMAGE_NAME }}:${DATE_TAG}" >> $GITHUB_OUTPUT
+            # Branch push: use date tag (backup) + latest
+            echo "tags=${{ env.IMAGE_NAME }}:${DATE_TAG},${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
             echo "version=${DATE_TAG}" >> $GITHUB_OUTPUT
           fi
 
