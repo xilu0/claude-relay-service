@@ -763,7 +763,7 @@ class ApiKeyService {
           if (!key.tags) {
             return false
           }
-          let tags = key.tags
+          let { tags } = key
           if (typeof tags === 'string') {
             try {
               tags = JSON.parse(tags)
@@ -2001,6 +2001,20 @@ class ApiKeyService {
     } catch (error) {
       logger.error('❌ Failed to get API key by ID:', error)
       return null
+    }
+  }
+
+  // 🔍 快速获取API Key名称
+  async getApiKeyName(keyId) {
+    try {
+      const keyData = await redis.getApiKey(keyId)
+      if (!keyData) {
+        return 'Unknown'
+      }
+      return keyData.name || 'Unknown'
+    } catch (error) {
+      logger.warn('❌ Failed to get API key name:', error)
+      return 'Unknown'
     }
   }
 

@@ -110,6 +110,66 @@ class WebhookNotifier {
 
     return errorCodes[platform]?.[status] || 'UNKNOWN_ERROR'
   }
+
+  /**
+   * 发送请求失败告警
+   * @param {Object} options - 告警选项
+   * @param {string} options.apiKeyId - API Key ID
+   * @param {string} options.apiKeyName - API Key名称
+   * @param {string} options.accountId - 账户ID
+   * @param {string} options.accountName - 账户名称
+   * @param {string} options.errorCode - 错误代码
+   * @param {number} options.statusCode - HTTP状态码
+   * @param {string} options.errorMessage - 错误消息
+   * @param {number} options.retryRound - 重试轮数
+   * @param {number} options.maxRetries - 最大重试次数
+   * @param {boolean} options.isFinal - 是否为最终失败
+   */
+  async sendRequestFailureAlert(options) {
+    try {
+      const {
+        apiKeyId,
+        apiKeyName,
+        accountId,
+        accountName,
+        errorCode,
+        statusCode,
+        errorMessage,
+        retryRound = 'N/A',
+        maxRetries = 'N/A',
+        isFinal = false
+      } = options
+
+      const alertMessage = {
+        timestamp: getISOStringWithTimezone(new Date()),
+        type: 'request_failure_alert',
+        isFinal,
+        retry: {
+          round: retryRound,
+          maxRetries
+        },
+        apiKey: {
+          id: apiKeyId,
+          name: apiKeyName
+        },
+        account: {
+          id: accountId || 'N/A',
+          name: accountName || 'N/A'
+        },
+        error: {
+          code: errorCode,
+          httpStatus: statusCode || 'N/A',
+          message: errorMessage
+        }
+      }
+
+      // 使用webhookService发送通知
+      await webhookService.sendNotification('request_failure_alert', alertMessage)
+    } catch (error) {
+      logger.error('Failed to send request failure alert:', error)
+      // 告警失败不应影响请求处理
+    }
+  }
 }
 
 module.exports = new WebhookNotifier()

@@ -1030,6 +1030,144 @@ class ClaudeConsoleRelayService {
   }
 
   // 🎯 健康检查
+  /**
+   * 发送非流式Console请求并返回标准化响应
+   * 用于重试服务中的多轮重试
+   * @param {string} accountId - 账户ID
+   * @param {Object} requestBody - 请求体
+   * @param {string} apiKeyId - API Key ID
+   * @returns {Promise<{status, data, error}>}
+   */
+  async relayConsoleMessages(accountId, requestBody, _apiKeyId) {
+    try {
+      // 获取账户信息
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (!account) {
+        return {
+          status: 404,
+          data: { error: 'account_not_found', message: 'Claude Console account not found' }
+        }
+      }
+
+      // 检查并发限制
+      if (account.maxConcurrentTasks > 0) {
+        const requestId = require('uuid').v4()
+        const newConcurrency = Number(
+          await redis.incrConsoleAccountConcurrency(accountId, requestId, 600)
+        )
+
+        if (newConcurrency > account.maxConcurrentTasks) {
+          await redis.decrConsoleAccountConcurrency(accountId, requestId)
+          return {
+            status: 503,
+            data: {
+              error: 'service_unavailable',
+              message: 'Console account concurrency limit reached'
+            }
+          }
+        }
+      }
+
+      // 处理模型映射
+      let mappedModel = requestBody.model
+      if (
+        account.supportedModels &&
+        typeof account.supportedModels === 'object' &&
+        !Array.isArray(account.supportedModels)
+      ) {
+        const newModel = claudeConsoleAccountService.getMappedModel(
+          account.supportedModels,
+          requestBody.model
+        )
+        if (newModel !== requestBody.model) {
+          mappedModel = newModel
+        }
+      }
+
+      // 创建修改后的请求体
+      const modifiedRequestBody = {
+        ...requestBody,
+        model: mappedModel
+      }
+
+      // 创建代理agent
+      const proxyAgent = claudeConsoleAccountService._createProxyAgent(account.proxy)
+
+      // 构建API端点
+      const cleanUrl = account.apiUrl.replace(/\/$/, '')
+      const apiEndpoint = cleanUrl.endsWith('/v1/messages') ? cleanUrl : `${cleanUrl}/v1/messages`
+
+      // 发送请求
+      let response
+      const requestId = require('uuid').v4()
+
+      try {
+        response = await axios({
+          method: 'POST',
+          url: apiEndpoint,
+          data: modifiedRequestBody,
+          headers: {
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01',
+            Authorization: `Bearer ${account.apiKey}`,
+            'User-Agent': account.userAgent || this.defaultUserAgent
+          },
+          timeout: config.requestTimeout || 600000,
+          httpAgent: proxyAgent?.http,
+          httpsAgent: proxyAgent?.https,
+          validateStatus: () => true // 接受所有状态码
+        })
+
+        // 返回标准化响应
+        if (response.status === 200 || response.status === 201) {
+          return {
+            status: response.status,
+            data: response.data
+          }
+        } else {
+          return {
+            status: response.status,
+            data: response.data || { error: 'unknown_error', message: 'Unknown error' }
+          }
+        }
+      } catch (error) {
+        logger.error(`Failed to relay Console message for account ${accountId}:`, error.message)
+        return {
+          status: 500,
+          data: {
+            error: 'internal_error',
+            message: error.message
+          }
+        }
+      } finally {
+        // 🔒 确保释放并发计数（即使请求失败或异常）
+        if (account.maxConcurrentTasks > 0) {
+          try {
+            await redis.decrConsoleAccountConcurrency(accountId, requestId)
+            logger.debug(`🔓 Released concurrency slot for account ${account.name} (${accountId})`)
+          } catch (err) {
+            logger.error(
+              `⚠️ Failed to release concurrency slot for account ${accountId}:`,
+              err.message
+            )
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(
+        `Unexpected error in relayConsoleMessages for account ${accountId}:`,
+        error.message
+      )
+      return {
+        status: 500,
+        data: {
+          error: 'internal_error',
+          message: error.message
+        }
+      }
+    }
+  }
+
   async healthCheck() {
     try {
       const accounts = await claudeConsoleAccountService.getAllAccounts()
