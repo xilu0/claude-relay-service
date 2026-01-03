@@ -244,6 +244,8 @@ class AccountTestSchedulerService {
         logger.warn(
           `❌ Scheduled test failed for ${platform} account ${accountId}: ${testResult.error}`
         )
+        // 测试失败，标记账户为异常状态
+        await this._markAccountAsError(accountId, platform, testResult.error)
       }
 
       return testResult
@@ -258,6 +260,9 @@ class AccountTestSchedulerService {
 
       await redis.saveAccountTestResult(accountId, platform, errorResult)
       await redis.setAccountLastTestTime(accountId, platform)
+
+      // 测试异常，标记账户为异常状态
+      await this._markAccountAsError(accountId, platform, error.message)
 
       return errorResult
     } finally {
@@ -314,6 +319,100 @@ class AccountTestSchedulerService {
       success: false,
       error: 'OpenAI scheduled test not implemented yet',
       timestamp: new Date().toISOString()
+    }
+  }
+
+  /**
+   * 将账户标记为异常状态
+   * @param {string} accountId - 账户ID
+   * @param {string} platform - 平台类型
+   * @param {string} errorMessage - 错误信息
+   * @private
+   */
+  async _markAccountAsError(accountId, platform, errorMessage) {
+    try {
+      const webhookNotifier = require('../utils/webhookNotifier')
+      let accountName = 'Unknown'
+
+      // 根据平台类型获取账户服务并更新状态
+      switch (platform) {
+        case 'claude': {
+          const claudeAccountService = require('./claudeAccountService')
+          const account = await claudeAccountService.getAccount(accountId)
+          if (account) {
+            accountName = account.name || accountId
+            // Claude 官方账户使用 redis 直接更新
+            const client = redis.getClientSafe()
+            await client.hset(`claude_account:${accountId}`, {
+              status: 'error',
+              errorMessage: `Scheduled test failed: ${errorMessage}`,
+              errorAt: new Date().toISOString()
+            })
+          }
+          break
+        }
+        case 'claude-console': {
+          const claudeConsoleAccountService = require('./claudeConsoleAccountService')
+          const account = await claudeConsoleAccountService.getAccount(accountId)
+          if (account) {
+            accountName = account.name || accountId
+            // Claude Console 账户使用 redis 直接更新
+            const client = redis.getClientSafe()
+            await client.hset(`claude_console_account:${accountId}`, {
+              status: 'error',
+              errorMessage: `Scheduled test failed: ${errorMessage}`,
+              errorAt: new Date().toISOString()
+            })
+          }
+          break
+        }
+        case 'gemini': {
+          const geminiAccountService = require('./geminiAccountService')
+          const account = await geminiAccountService.getAccount(accountId)
+          if (account) {
+            accountName = account.name || accountId
+            const client = redis.getClientSafe()
+            await client.hset(`gemini_account:${accountId}`, {
+              status: 'error',
+              errorMessage: `Scheduled test failed: ${errorMessage}`,
+              errorAt: new Date().toISOString()
+            })
+          }
+          break
+        }
+        case 'openai': {
+          // OpenAI 账户暂不处理
+          break
+        }
+        default:
+          logger.warn(`⚠️ Unknown platform for marking account as error: ${platform}`)
+          return
+      }
+
+      logger.warn(
+        `🚫 Marked ${platform} account ${accountId} (${accountName}) as error due to test failure`
+      )
+
+      // 发送 Webhook 通知
+      await webhookNotifier.sendAccountAnomalyNotification({
+        accountId,
+        accountName,
+        platform,
+        status: 'error',
+        errorCode: 'SCHEDULED_TEST_FAILED',
+        reason: `Scheduled test failed: ${errorMessage}`
+      })
+
+      // 停止该账户的定时任务
+      const accountKey = `${platform}:${accountId}`
+      const existingTask = this.scheduledTasks.get(accountKey)
+      if (existingTask) {
+        existingTask.task.stop()
+        this.scheduledTasks.delete(accountKey)
+        logger.info(`🛑 Stopped scheduled test task for error account: ${accountKey}`)
+      }
+    } catch (error) {
+      logger.error(`❌ Failed to mark account ${accountId} as error:`, error)
     }
   }
 

@@ -3439,13 +3439,22 @@ redisClient.getAccountTestConfig = async function (accountId, platform) {
 }
 
 /**
- * 获取所有启用定时测试的账户
+ * 获取所有启用定时测试的账户（过滤掉异常状态的账户）
  * @param {string} platform - 平台类型
  * @returns {Promise<Array>} 账户ID列表及 cron 配置
  */
 redisClient.getEnabledTestAccounts = async function (platform) {
   const accountIds = []
   let cursor = '0'
+
+  // 根据平台确定账户存储的 key 前缀
+  const accountKeyPrefixMap = {
+    claude: 'claude_account:',
+    'claude-console': 'claude_console_account:',
+    gemini: 'gemini_account:',
+    openai: 'openai_account:'
+  }
+  const accountKeyPrefix = accountKeyPrefixMap[platform] || `${platform}_account:`
 
   try {
     const client = this.getClientSafe()
@@ -3463,6 +3472,16 @@ redisClient.getEnabledTestAccounts = async function (platform) {
         const testConfig = await client.hgetall(key)
         if (testConfig && testConfig.enabled === 'true') {
           const accountId = key.replace(`account:test_config:${platform}:`, '')
+
+          // 检查账户状态，过滤掉异常状态的账户
+          const accountStatus = await client.hget(`${accountKeyPrefix}${accountId}`, 'status')
+          if (accountStatus === 'error') {
+            logger.debug(
+              `⏭️ Skipping ${platform} account ${accountId} for scheduled test (status: error)`
+            )
+            continue
+          }
+
           // 向后兼容：如果存在旧的 testHour 字段，转换为 cron 表达式
           let { cronExpression } = testConfig
           if (!cronExpression && testConfig.testHour) {
