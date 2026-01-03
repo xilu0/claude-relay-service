@@ -761,6 +761,31 @@
                 </div>
                 <div v-else class="text-gray-400">无代理</div>
               </td>
+              <td class="whitespace-nowrap px-3 py-4">
+                <BalanceDisplay
+                  :account-id="account.id"
+                  :initial-balance="account.balanceInfo"
+                  :platform="account.platform"
+                  :query-mode="
+                    account.platform === 'gemini' && account.oauthProvider === 'antigravity'
+                      ? 'auto'
+                      : 'local'
+                  "
+                  @error="(error) => handleBalanceError(account.id, error)"
+                  @refreshed="(data) => handleBalanceRefreshed(account.id, data)"
+                />
+                <div class="mt-1 text-xs">
+                  <button
+                    v-if="
+                      !(account.platform === 'gemini' && account.oauthProvider === 'antigravity')
+                    "
+                    class="text-blue-500 hover:underline dark:text-blue-300"
+                    @click="openBalanceScriptModal(account)"
+                  >
+                    配置余额脚本
+                  </button>
+                </div>
+              </td>
               <td class="whitespace-nowrap px-3 py-4 text-sm">
                 <div v-if="account.usage && account.usage.daily" class="space-y-1">
                   <div class="flex items-center gap-2">
@@ -1327,6 +1352,32 @@
                 </div>
               </div>
               <div v-else class="text-sm font-semibold text-gray-400">-</div>
+            </div>
+          </div>
+
+          <!-- 余额/配额 -->
+          <div class="mb-3">
+            <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">余额/配额</p>
+            <BalanceDisplay
+              :account-id="account.id"
+              :initial-balance="account.balanceInfo"
+              :platform="account.platform"
+              :query-mode="
+                account.platform === 'gemini' && account.oauthProvider === 'antigravity'
+                  ? 'auto'
+                  : 'local'
+              "
+              @error="(error) => handleBalanceError(account.id, error)"
+              @refreshed="(data) => handleBalanceRefreshed(account.id, data)"
+            />
+            <div class="mt-1 text-xs">
+              <button
+                v-if="!(account.platform === 'gemini' && account.oauthProvider === 'antigravity')"
+                class="text-blue-500 hover:underline dark:text-blue-300"
+                @click="openBalanceScriptModal(account)"
+              >
+                配置余额脚本
+              </button>
             </div>
           </div>
 

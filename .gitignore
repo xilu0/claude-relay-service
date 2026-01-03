@@ -253,3 +253,6 @@ test.md
 response.json
 scripts/query-api-keys.js
 operations.md
+
+.cunzhi-memory/
+*.jsonl
