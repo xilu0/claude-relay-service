@@ -423,7 +423,7 @@ class AccountTestSchedulerService {
    * @param {string} model - 测试使用的模型
    * @returns {Promise<Object>} 测试结果
    */
-  async triggerTest(accountId, platform, model = 'claude-sonnet-4-5-20250929') {
+  async triggerTest(accountId, platform, model = 'claude-haiku-4-5-20251001') {
     logger.info(`🎯 Manual test triggered for ${platform} account: ${accountId} (model: ${model})`)
     return await this._runAccountTest(accountId, platform, model)
   }

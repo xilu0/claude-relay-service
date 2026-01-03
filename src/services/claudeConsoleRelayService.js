@@ -1430,7 +1430,7 @@ class ClaudeConsoleRelayService {
   }
 
   // 🧪 非流式测试账号连接（供定时任务使用）
-  async testAccountConnectionSync(accountId, model = 'claude-sonnet-4-5-20250929') {
+  async testAccountConnectionSync(accountId, model = 'claude-haiku-4-5-20251001') {
     const { createClaudeTestPayload } = require('../utils/testPayloadHelper')
 
     const startTime = Date.now()

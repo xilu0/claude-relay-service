@@ -3395,8 +3395,8 @@ redisClient.saveAccountTestConfig = async function (accountId, platform, testCon
     const client = this.getClientSafe()
     await client.hset(key, {
       enabled: testConfig.enabled ? 'true' : 'false',
-      cronExpression: testConfig.cronExpression || '0 8 * * *', // 默认每天早上8点
-      model: testConfig.model || 'claude-sonnet-4-5-20250929', // 默认模型
+      cronExpression: testConfig.cronExpression || '* * * * *', // 默认每分钟
+      model: testConfig.model || 'claude-haiku-4-5-20251001', // 默认模型
       updatedAt: new Date().toISOString()
     })
     // 设置过期时间（1年）
@@ -3428,8 +3428,8 @@ redisClient.getAccountTestConfig = async function (accountId, platform) {
     }
     return {
       enabled: testConfig.enabled === 'true',
-      cronExpression: cronExpression || '0 8 * * *',
-      model: testConfig.model || 'claude-sonnet-4-5-20250929',
+      cronExpression: cronExpression || '* * * * *',
+      model: testConfig.model || 'claude-haiku-4-5-20251001',
       updatedAt: testConfig.updatedAt
     }
   } catch (error) {
@@ -3490,8 +3490,8 @@ redisClient.getEnabledTestAccounts = async function (platform) {
           }
           accountIds.push({
             accountId,
-            cronExpression: cronExpression || '0 8 * * *',
-            model: testConfig.model || 'claude-sonnet-4-5-20250929'
+            cronExpression: cronExpression || '* * * * *',
+            model: testConfig.model || 'claude-haiku-4-5-20251001'
           })
         }
       }

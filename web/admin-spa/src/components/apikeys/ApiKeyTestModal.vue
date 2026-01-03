@@ -231,7 +231,7 @@ const testStartTime = ref(null)
 const abortController = ref(null)
 
 // 测试模型
-const testModel = ref('claude-sonnet-4-5-20250929')
+const testModel = ref('claude-opus-4-5-20251101')
 
 // 计算属性
 const displayName = computed(() => {

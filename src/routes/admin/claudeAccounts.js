@@ -948,8 +948,8 @@ router.get('/claude-accounts/:accountId/test-config', authenticateAdmin, async (
         platform: 'claude',
         config: testConfig || {
           enabled: false,
-          cronExpression: '0 8 * * *',
-          model: 'claude-sonnet-4-5-20250929'
+          cronExpression: '* * * * *',
+          model: 'claude-haiku-4-5-20251001'
         }
       }
     })
@@ -997,12 +997,12 @@ router.put('/claude-accounts/:accountId/test-config', authenticateAdmin, async (
     if (!accountTestSchedulerService.validateCronExpression(cronExpression)) {
       return res.status(400).json({
         error: 'Invalid parameter',
-        message: `Invalid cron expression: ${cronExpression}. Format: "minute hour day month weekday" (e.g., "0 8 * * *" for daily at 8:00)`
+        message: `Invalid cron expression: ${cronExpression}. Format: "minute hour day month weekday" (e.g., "* * * * *" for every minute)`
       })
     }
 
     // 验证模型参数
-    const testModel = model || 'claude-sonnet-4-5-20250929'
+    const testModel = model || 'claude-haiku-4-5-20251001'
     if (typeof testModel !== 'string' || testModel.length > 256) {
       return res.status(400).json({
         error: 'Invalid parameter',

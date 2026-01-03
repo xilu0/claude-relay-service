@@ -26,7 +26,7 @@ function generateSessionString() {
  * @param {boolean} options.stream - 是否流式（默认false）
  * @returns {object} 测试请求体
  */
-function createClaudeTestPayload(model = 'claude-sonnet-4-5-20250929', options = {}) {
+function createClaudeTestPayload(model = 'claude-haiku-4-5-20251001', options = {}) {
   const payload = {
     model,
     messages: [
@@ -86,7 +86,7 @@ async function sendStreamTestRequest(options) {
     apiUrl,
     authorization,
     responseStream,
-    payload = createClaudeTestPayload('claude-sonnet-4-5-20250929', { stream: true }),
+    payload = createClaudeTestPayload('claude-haiku-4-5-20251001', { stream: true }),
     proxyAgent = null,
     timeout = 30000,
     extraHeaders = {}

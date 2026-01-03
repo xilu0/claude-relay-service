@@ -74,11 +74,11 @@
                 v-model="config.cronExpression"
                 class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:placeholder-gray-500"
                 :disabled="!config.enabled"
-                placeholder="0 8 * * *"
+                placeholder="* * * * *"
                 type="text"
               />
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                格式: 分 时 日 月 周 (例: "0 8 * * *" = 每天8:00)
+                格式: 分 时 日 月 周 (例: "* * * * *" = 每分钟)
               </p>
             </div>
 
@@ -115,7 +115,7 @@
                 v-model="config.model"
                 class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 placeholder-gray-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:placeholder-gray-500"
                 :disabled="!config.enabled"
-                placeholder="claude-sonnet-4-5-20250929"
+                placeholder="claude-haiku-4-5-20251001"
                 type="text"
               />
               <div class="mt-2 flex flex-wrap gap-2">
@@ -241,13 +241,14 @@ const loading = ref(false)
 const saving = ref(false)
 const config = ref({
   enabled: false,
-  cronExpression: '0 8 * * *',
-  model: 'claude-sonnet-4-5-20250929'
+  cronExpression: '* * * * *',
+  model: 'claude-haiku-4-5-20251001'
 })
 const testHistory = ref([])
 
 // Cron 预设选项
 const cronPresets = [
+  { label: '每分钟', value: '* * * * *' },
   { label: '每天 8:00', value: '0 8 * * *' },
   { label: '每天 12:00', value: '0 12 * * *' },
   { label: '每天 18:00', value: '0 18 * * *' },
@@ -258,8 +259,8 @@ const cronPresets = [
 
 // 模型选项
 const modelOptions = [
-  { label: 'Claude Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' },
   { label: 'Claude Haiku 4.5', value: 'claude-haiku-4-5-20251001' },
+  { label: 'Claude Sonnet 4.5', value: 'claude-sonnet-4-5-20250929' },
   { label: 'Claude Opus 4.5', value: 'claude-opus-4-5-20251101' }
 ]
 
@@ -308,8 +309,8 @@ async function loadConfig() {
       if (data.success && data.data?.config) {
         config.value = {
           enabled: data.data.config.enabled || false,
-          cronExpression: data.data.config.cronExpression || '0 8 * * *',
-          model: data.data.config.model || 'claude-sonnet-4-5-20250929'
+          cronExpression: data.data.config.cronExpression || '* * * * *',
+          model: data.data.config.model || 'claude-haiku-4-5-20251001'
         }
       }
     }
@@ -397,8 +398,8 @@ watch(
     if (newVal) {
       config.value = {
         enabled: false,
-        cronExpression: '0 8 * * *',
-        model: 'claude-sonnet-4-5-20250929'
+        cronExpression: '* * * * *',
+        model: 'claude-haiku-4-5-20251001'
       }
       testHistory.value = []
       loadConfig()
