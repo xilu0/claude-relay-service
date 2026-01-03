@@ -288,6 +288,8 @@ async function loadConfig() {
     let endpoint = ''
     if (platform === 'claude') {
       endpoint = `${API_PREFIX}/admin/claude-accounts/${props.account.id}/test-config`
+    } else if (platform === 'claude-console') {
+      endpoint = `${API_PREFIX}/admin/claude-console-accounts/${props.account.id}/test-config`
     } else {
       // 其他平台暂不支持
       loading.value = false
@@ -345,6 +347,8 @@ async function saveConfig() {
     let endpoint = ''
     if (platform === 'claude') {
       endpoint = `${API_PREFIX}/admin/claude-accounts/${props.account.id}/test-config`
+    } else if (platform === 'claude-console') {
+      endpoint = `${API_PREFIX}/admin/claude-console-accounts/${props.account.id}/test-config`
     } else {
       saving.value = false
       return

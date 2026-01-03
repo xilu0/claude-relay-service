@@ -9,6 +9,7 @@ const router = express.Router()
 const claudeConsoleAccountService = require('../../services/claudeConsoleAccountService')
 const claudeConsoleRelayService = require('../../services/claudeConsoleRelayService')
 const accountGroupService = require('../../services/accountGroupService')
+const accountTestSchedulerService = require('../../services/accountTestSchedulerService')
 const apiKeyService = require('../../services/apiKeyService')
 const redis = require('../../models/redis')
 const { authenticateAdmin } = require('../../middleware/auth')
@@ -494,5 +495,160 @@ router.post('/claude-console-accounts/:accountId/test', authenticateAdmin, async
     // 错误已在服务层处理，这里仅做日志记录
   }
 })
+
+// ============================================================================
+// 账户定时测试相关端点
+// ============================================================================
+
+// 获取账户测试历史
+router.get(
+  '/claude-console-accounts/:accountId/test-history',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+
+    try {
+      const history = await redis.getAccountTestHistory(accountId, 'claude-console')
+      return res.json({
+        success: true,
+        data: {
+          accountId,
+          platform: 'claude-console',
+          history
+        }
+      })
+    } catch (error) {
+      logger.error(`❌ Failed to get test history for Claude Console account ${accountId}:`, error)
+      return res.status(500).json({
+        error: 'Failed to get test history',
+        message: error.message
+      })
+    }
+  }
+)
+
+// 获取账户定时测试配置
+router.get(
+  '/claude-console-accounts/:accountId/test-config',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+
+    try {
+      const testConfig = await redis.getAccountTestConfig(accountId, 'claude-console')
+      return res.json({
+        success: true,
+        data: {
+          accountId,
+          platform: 'claude-console',
+          config: testConfig || {
+            enabled: false,
+            cronExpression: '0 8 * * *',
+            model: 'claude-sonnet-4-5-20250929'
+          }
+        }
+      })
+    } catch (error) {
+      logger.error(`❌ Failed to get test config for Claude Console account ${accountId}:`, error)
+      return res.status(500).json({
+        error: 'Failed to get test config',
+        message: error.message
+      })
+    }
+  }
+)
+
+// 设置账户定时测试配置
+router.put(
+  '/claude-console-accounts/:accountId/test-config',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+    const { enabled, cronExpression, model } = req.body
+
+    try {
+      // 验证 enabled 参数
+      if (typeof enabled !== 'boolean') {
+        return res.status(400).json({
+          error: 'Invalid parameter',
+          message: 'enabled must be a boolean'
+        })
+      }
+
+      // 验证 cronExpression 参数
+      if (!cronExpression || typeof cronExpression !== 'string') {
+        return res.status(400).json({
+          error: 'Invalid parameter',
+          message: 'cronExpression is required and must be a string'
+        })
+      }
+
+      // 限制 cronExpression 长度防止 DoS
+      const MAX_CRON_LENGTH = 100
+      if (cronExpression.length > MAX_CRON_LENGTH) {
+        return res.status(400).json({
+          error: 'Invalid parameter',
+          message: `cronExpression too long (max ${MAX_CRON_LENGTH} characters)`
+        })
+      }
+
+      // 使用 service 的方法验证 cron 表达式
+      if (!accountTestSchedulerService.validateCronExpression(cronExpression)) {
+        return res.status(400).json({
+          error: 'Invalid parameter',
+          message: `Invalid cron expression: ${cronExpression}. Format: "minute hour day month weekday" (e.g., "0 8 * * *" for daily at 8:00)`
+        })
+      }
+
+      // 验证模型参数
+      const testModel = model || 'claude-sonnet-4-5-20250929'
+      if (typeof testModel !== 'string' || testModel.length > 256) {
+        return res.status(400).json({
+          error: 'Invalid parameter',
+          message: 'model must be a valid string (max 256 characters)'
+        })
+      }
+
+      // 检查账户是否存在
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (!account) {
+        return res.status(404).json({
+          error: 'Account not found',
+          message: `Claude Console account ${accountId} not found`
+        })
+      }
+
+      // 保存配置
+      await redis.saveAccountTestConfig(accountId, 'claude-console', {
+        enabled,
+        cronExpression,
+        model: testModel
+      })
+
+      logger.success(
+        `📝 Updated test config for Claude Console account ${accountId}: enabled=${enabled}, cronExpression=${cronExpression}, model=${testModel}`
+      )
+
+      return res.json({
+        success: true,
+        message: 'Test config updated successfully',
+        data: {
+          accountId,
+          platform: 'claude-console',
+          config: { enabled, cronExpression, model: testModel }
+        }
+      })
+    } catch (error) {
+      logger.error(
+        `❌ Failed to update test config for Claude Console account ${accountId}:`,
+        error
+      )
+      return res.status(500).json({
+        error: 'Failed to update test config',
+        message: error.message
+      })
+    }
+  }
+)
 
 module.exports = router
