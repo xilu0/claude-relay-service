@@ -34,6 +34,7 @@ export const useApiKeysStore = defineStore('apiKeys', () => {
         search: options.search || '',
         status: options.status || 'all',
         permissions: options.permissions || 'all',
+        tag: options.tag || '',
         timeRange: options.timeRange || 'all'
       }
 

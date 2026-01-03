@@ -730,7 +730,8 @@ class ApiKeyService {
         sortOrder = 'desc',
         searchQuery = '',
         filterStatus = 'all',
-        filterPermissions = 'all'
+        filterPermissions = 'all',
+        filterTag = ''
       } = options
 
       // 1️⃣ 获取所有API Key的基本信息（使用索引优化，O(1)性能）
@@ -754,6 +755,25 @@ class ApiKeyService {
       // 权限过滤
       if (filterPermissions !== 'all') {
         apiKeys = apiKeys.filter((key) => (key.permissions || 'all') === filterPermissions)
+      }
+
+      // 标签过滤
+      if (filterTag) {
+        apiKeys = apiKeys.filter((key) => {
+          if (!key.tags) {
+            return false
+          }
+          let tags = key.tags
+          if (typeof tags === 'string') {
+            try {
+              tags = JSON.parse(tags)
+            } catch (e) {
+              // JSON 解析失败，跳过此 key
+              return false
+            }
+          }
+          return Array.isArray(tags) && tags.includes(filterTag)
+        })
       }
 
       // 搜索过滤

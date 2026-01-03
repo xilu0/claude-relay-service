@@ -206,6 +206,7 @@ router.get('/api-keys', authenticateAdmin, async (req, res) => {
       search,
       status,
       permissions,
+      tag,
       timeRange = 'all',
       startDate,
       endDate
@@ -221,7 +222,8 @@ router.get('/api-keys', authenticateAdmin, async (req, res) => {
           sortOrder: sortOrder || 'desc',
           searchQuery: search || '',
           filterStatus: status || 'all',
-          filterPermissions: permissions || 'all'
+          filterPermissions: permissions || 'all',
+          filterTag: tag || ''
         })
 
         // 获取用户服务来补充owner信息

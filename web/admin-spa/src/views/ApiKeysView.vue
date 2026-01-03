@@ -2456,6 +2456,7 @@ const loadApiKeys = async () => {
       search: searchKeyword.value || '',
       status: 'all',
       permissions: 'all',
+      tag: selectedTagFilter.value || '',
       timeRange: timeRangeParam,
       startDate: startDateParam,
       endDate: endDateParam
@@ -4310,6 +4311,7 @@ const exportToExcel = () => {
 
 // 监听筛选条件变化，重置页码和选中状态
 // 监听筛选条件变化（不包括搜索），清空选中状态
+// 注：设置 currentPage 为 1 会触发其 setter，自动调用 loadApiKeys()
 watch([selectedTagFilter, apiKeyStatsTimeRange], () => {
   currentPage.value = 1
   // 清空选中状态
