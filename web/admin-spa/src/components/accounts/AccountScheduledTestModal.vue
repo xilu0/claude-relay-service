@@ -370,7 +370,9 @@ async function saveConfig() {
     if (res.ok) {
       showToast('配置已保存', 'success')
       emit('saved')
+      saving.value = false // 先设置为 false，否则 handleClose() 会因为检查 saving.value 而直接返回
       handleClose()
+      return // 提前返回，避免 finally 重复设置
     } else {
       const errorData = await res.json().catch(() => ({}))
       showToast(errorData.message || '保存失败', 'error')

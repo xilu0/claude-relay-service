@@ -84,7 +84,7 @@ class AccountTestSchedulerService {
    */
   async _refreshAllTasks() {
     try {
-      const platforms = ['claude', 'gemini', 'openai']
+      const platforms = ['claude', 'claude-console', 'gemini', 'openai']
       const activeAccountKeys = new Set()
 
       // 并行加载所有平台的配置
@@ -212,6 +212,9 @@ class AccountTestSchedulerService {
         case 'claude':
           testResult = await this._testClaudeAccount(accountId, model)
           break
+        case 'claude-console':
+          testResult = await this._testClaudeConsoleAccount(accountId, model)
+          break
         case 'gemini':
           testResult = await this._testGeminiAccount(accountId, model)
           break
@@ -271,6 +274,17 @@ class AccountTestSchedulerService {
   async _testClaudeAccount(accountId, model) {
     const claudeRelayService = require('./claudeRelayService')
     return await claudeRelayService.testAccountConnectionSync(accountId, model)
+  }
+
+  /**
+   * 测试 Claude Console 账户
+   * @param {string} accountId
+   * @param {string} model - 测试使用的模型
+   * @private
+   */
+  async _testClaudeConsoleAccount(accountId, model) {
+    const claudeConsoleRelayService = require('./claudeConsoleRelayService')
+    return await claudeConsoleRelayService.testAccountConnectionSync(accountId, model)
   }
 
   /**

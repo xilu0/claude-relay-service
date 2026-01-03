@@ -1429,6 +1429,189 @@ class ClaudeConsoleRelayService {
     }
   }
 
+  // 🧪 非流式测试账号连接（供定时任务使用）
+  async testAccountConnectionSync(accountId, model = 'claude-sonnet-4-5-20250929') {
+    const { createClaudeTestPayload } = require('../utils/testPayloadHelper')
+
+    const startTime = Date.now()
+
+    try {
+      const account = await claudeConsoleAccountService.getAccount(accountId)
+      if (!account) {
+        throw new Error('Account not found')
+      }
+
+      logger.info(
+        `🧪 Testing Claude Console account connection (sync): ${account.name} (${accountId})`
+      )
+
+      const cleanUrl = account.apiUrl.replace(/\/$/, '')
+      const apiUrl = cleanUrl.endsWith('/v1/messages')
+        ? cleanUrl
+        : `${cleanUrl}/v1/messages?beta=true`
+
+      const payload = createClaudeTestPayload(model, { stream: true })
+      const proxyAgent = claudeConsoleAccountService._createProxyAgent(account.proxy)
+
+      const requestConfig = {
+        method: 'POST',
+        url: apiUrl,
+        data: payload,
+        headers: {
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'User-Agent': account.userAgent || 'claude-cli/2.0.52 (external, cli)',
+          authorization: `Bearer ${account.apiKey}`
+        },
+        timeout: 30000,
+        responseType: 'stream',
+        validateStatus: () => true
+      }
+
+      if (proxyAgent) {
+        requestConfig.httpAgent = proxyAgent
+        requestConfig.httpsAgent = proxyAgent
+        requestConfig.proxy = false
+      }
+
+      const response = await axios(requestConfig)
+
+      // 收集流式响应
+      return new Promise((resolve) => {
+        let responseText = ''
+        let capturedUsage = null
+        let capturedModel = model
+        let hasError = false
+        let errorMessage = ''
+        let buffer = ''
+
+        // 处理非200响应
+        if (response.status !== 200) {
+          const chunks = []
+          response.data.on('data', (chunk) => chunks.push(chunk))
+          response.data.on('end', () => {
+            const errorData = Buffer.concat(chunks).toString()
+            let errorMsg = `API Error: ${response.status}`
+            try {
+              const json = JSON.parse(errorData)
+              errorMsg = json.message || json.error?.message || json.error || errorMsg
+            } catch {
+              if (errorData.length < 200) {
+                errorMsg = errorData || errorMsg
+              }
+            }
+            const latencyMs = Date.now() - startTime
+            resolve({
+              success: false,
+              error: errorMsg,
+              latencyMs,
+              timestamp: new Date().toISOString()
+            })
+          })
+          response.data.on('error', (err) => {
+            const latencyMs = Date.now() - startTime
+            resolve({
+              success: false,
+              error: err.message,
+              latencyMs,
+              timestamp: new Date().toISOString()
+            })
+          })
+          return
+        }
+
+        response.data.on('data', (chunk) => {
+          buffer += chunk.toString()
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data:')) {
+              continue
+            }
+            const jsonStr = line.substring(5).trim()
+            if (!jsonStr || jsonStr === '[DONE]') {
+              continue
+            }
+
+            try {
+              const data = JSON.parse(jsonStr)
+
+              // 提取文本内容
+              if (data.type === 'content_block_delta' && data.delta?.text) {
+                responseText += data.delta.text
+              }
+              // 提取 usage 信息
+              if (data.type === 'message_delta' && data.usage) {
+                capturedUsage = data.usage
+              }
+              // 提取模型信息
+              if (data.type === 'message_start' && data.message?.model) {
+                capturedModel = data.message.model
+              }
+              // 检测错误
+              if (data.type === 'error' || data.error) {
+                hasError = true
+                errorMessage = data.error?.message || data.message || data.error || 'Unknown error'
+              }
+            } catch {
+              // ignore parse errors
+            }
+          }
+        })
+
+        response.data.on('end', () => {
+          const latencyMs = Date.now() - startTime
+
+          if (hasError) {
+            logger.warn(
+              `⚠️ Test completed with error for Claude Console account: ${account.name} - ${errorMessage}`
+            )
+            resolve({
+              success: false,
+              error: errorMessage,
+              latencyMs,
+              timestamp: new Date().toISOString()
+            })
+            return
+          }
+
+          logger.info(
+            `✅ Test completed for Claude Console account: ${account.name} (${latencyMs}ms)`
+          )
+
+          resolve({
+            success: true,
+            message: responseText.substring(0, 200), // 截取前200字符
+            latencyMs,
+            model: capturedModel,
+            usage: capturedUsage,
+            timestamp: new Date().toISOString()
+          })
+        })
+
+        response.data.on('error', (err) => {
+          const latencyMs = Date.now() - startTime
+          resolve({
+            success: false,
+            error: err.message,
+            latencyMs,
+            timestamp: new Date().toISOString()
+          })
+        })
+      })
+    } catch (error) {
+      const latencyMs = Date.now() - startTime
+      logger.error(`❌ Test Claude Console account connection (sync) failed:`, error)
+      return {
+        success: false,
+        error: error.message,
+        latencyMs,
+        timestamp: new Date().toISOString()
+      }
+    }
+  }
+
   // 🎯 健康检查
   async healthCheck() {
     try {
