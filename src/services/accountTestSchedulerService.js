@@ -345,6 +345,8 @@ class AccountTestSchedulerService {
             const client = redis.getClientSafe()
             await client.hset(`claude_account:${accountId}`, {
               status: 'error',
+              isActive: 'false',
+              schedulable: 'false',
               errorMessage: `Scheduled test failed: ${errorMessage}`,
               errorAt: new Date().toISOString()
             })
@@ -360,6 +362,8 @@ class AccountTestSchedulerService {
             const client = redis.getClientSafe()
             await client.hset(`claude_console_account:${accountId}`, {
               status: 'error',
+              isActive: 'false',
+              schedulable: 'false',
               errorMessage: `Scheduled test failed: ${errorMessage}`,
               errorAt: new Date().toISOString()
             })
@@ -374,6 +378,8 @@ class AccountTestSchedulerService {
             const client = redis.getClientSafe()
             await client.hset(`gemini_account:${accountId}`, {
               status: 'error',
+              isActive: 'false',
+              schedulable: 'false',
               errorMessage: `Scheduled test failed: ${errorMessage}`,
               errorAt: new Date().toISOString()
             })
