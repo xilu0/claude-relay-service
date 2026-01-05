@@ -588,6 +588,8 @@ NEVER proactively create documentation files (\*.md) or README files. Only creat
 - Redis (existing infrastructure) (001-image-billing)
 - Node.js 18+ (>=18.0.0 per package.json) + Express.js 4.18.2, ioredis 5.3.2, winston 3.11.0 (001-fix-ghost-accounts)
 - Redis (hash storage with `claude_console_account:{id}` key pattern) (001-fix-ghost-accounts)
+- Node.js 18+ (ES2020+) + Express.js 4.18.2, ioredis 5.3.2, axios 1.6.0, winston 3.11.0 (001-console-model-alert)
+- Redis (existing infrastructure, ioredis client) (001-console-model-alert)
 
 ## Recent Changes
 - 001-image-billing: Added Node.js 18+ + Express.js, ioredis, axios, winston

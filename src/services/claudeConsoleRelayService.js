@@ -9,6 +9,7 @@ const {
   sanitizeErrorMessage,
   isAccountDisabledError
 } = require('../utils/errorSanitizer')
+const modelAlertService = require('./modelAlertService')
 
 class ClaudeConsoleRelayService {
   constructor() {
@@ -305,6 +306,28 @@ class ClaudeConsoleRelayService {
         // 成功响应，不需要清理
         responseBody =
           typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+
+        // 🔔 Model anomaly check for successful responses (non-blocking)
+        try {
+          const responseData =
+            typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+          const detectedModel = responseData?.model
+
+          // Async non-blocking model check
+          modelAlertService
+            .checkAndAlert({
+              modelName: detectedModel,
+              apiKeyName: apiKeyData.name || apiKeyData.id,
+              apiKeyId: apiKeyData.id,
+              accountId: accountId,
+              accountName: account.name
+            })
+            .catch((err) => {
+              logger.warn('Model alert check failed:', err.message)
+            })
+        } catch (parseErr) {
+          logger.warn('Failed to parse response for model check:', parseErr.message)
+        }
       }
 
       logger.debug(`[DEBUG] Final response body to return: ${responseBody.substring(0, 200)}...`)
@@ -461,6 +484,7 @@ class ClaudeConsoleRelayService {
       await this._makeClaudeConsoleStreamRequest(
         modifiedRequestBody,
         account,
+        apiKeyData,
         proxyAgent,
         clientHeaders,
         responseStream,
@@ -508,6 +532,7 @@ class ClaudeConsoleRelayService {
   async _makeClaudeConsoleStreamRequest(
     body,
     account,
+    apiKeyData,
     proxyAgent,
     clientHeaders,
     responseStream,
@@ -691,6 +716,7 @@ class ClaudeConsoleRelayService {
 
           let buffer = ''
           let finalUsageReported = false
+          let modelAlertChecked = false // Flag to prevent duplicate model checks
           const collectedUsageData = {
             model: body.model || account?.defaultModel || null
           }
@@ -757,6 +783,23 @@ class ClaudeConsoleRelayService {
                             '📊 Collected detailed cache creation data:',
                             JSON.stringify(collectedUsageData.cache_creation)
                           )
+                        }
+
+                        // 🔔 Model anomaly check for streaming responses (non-blocking, single check)
+                        if (!modelAlertChecked) {
+                          modelAlertChecked = true
+                          const detectedModel = data.message.model
+                          modelAlertService
+                            .checkAndAlert({
+                              modelName: detectedModel,
+                              apiKeyName: apiKeyData.name || apiKeyData.id,
+                              apiKeyId: apiKeyData.id,
+                              accountId: accountId,
+                              accountName: account.name
+                            })
+                            .catch((err) => {
+                              logger.warn('Model alert check failed (stream):', err.message)
+                            })
                         }
                       }
 

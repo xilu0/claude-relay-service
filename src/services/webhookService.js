@@ -539,6 +539,7 @@ class WebhookService {
       systemError: '❌ 系统错误',
       securityAlert: '🔒 安全警报',
       rateLimitRecovery: '🎉 限流恢复通知',
+      modelAnomaly: '🚨 模型异常告警',
       test: '🧪 测试通知'
     }
 
@@ -555,6 +556,7 @@ class WebhookService {
       systemError: 'critical',
       securityAlert: 'critical',
       rateLimitRecovery: 'active',
+      modelAnomaly: 'timeSensitive',
       test: 'passive'
     }
 
@@ -571,6 +573,7 @@ class WebhookService {
       systemError: 'alert',
       securityAlert: 'alarm',
       rateLimitRecovery: 'success',
+      modelAnomaly: 'alarm',
       test: 'default'
     }
 
@@ -743,8 +746,25 @@ class WebhookService {
   formatNotificationDetails(data) {
     const lines = []
 
+    // Model anomaly specific fields
+    if (data.apiKeyName) {
+      lines.push(`**API Key**: ${data.apiKeyName}`)
+    }
+
+    if (data.detectedModel) {
+      lines.push(`**检测到的模型**: ${data.detectedModel}`)
+    }
+
+    if (data.expectedModels) {
+      lines.push(`**预期模型**: ${data.expectedModels.join(', ')}`)
+    }
+
     if (data.accountName) {
       lines.push(`**账号**: ${data.accountName}`)
+    }
+
+    if (data.accountId) {
+      lines.push(`**账号ID**: ${data.accountId}`)
     }
 
     if (data.platform) {
@@ -829,6 +849,7 @@ class WebhookService {
       systemError: 'red',
       securityAlert: 'red',
       rateLimitRecovery: 'green',
+      modelAnomaly: 'red',
       test: 'blue'
     }
 
@@ -845,6 +866,7 @@ class WebhookService {
       systemError: ':x:',
       securityAlert: ':lock:',
       rateLimitRecovery: ':tada:',
+      modelAnomaly: ':rotating_light:',
       test: ':test_tube:'
     }
 
@@ -861,6 +883,7 @@ class WebhookService {
       systemError: 0xf44336, // 红色
       securityAlert: 0xf44336, // 红色
       rateLimitRecovery: 0x4caf50, // 绿色
+      modelAnomaly: 0xf44336, // 红色
       test: 0x2196f3 // 蓝色
     }
 

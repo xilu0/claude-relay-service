@@ -1260,7 +1260,9 @@ const DEFAULT_WEBHOOK_NOTIFICATION_TYPES = {
   quotaWarning: true,
   systemError: true,
   securityAlert: true,
-  rateLimitRecovery: true
+  rateLimitRecovery: true,
+  modelAnomaly: true,
+  test: true
 }
 
 const webhookConfig = ref({
@@ -1484,6 +1486,12 @@ const loadWebhookConfig = async () => {
         notificationTypes: {
           ...DEFAULT_WEBHOOK_NOTIFICATION_TYPES,
           ...(config.notificationTypes || {})
+        },
+        retrySettings: {
+          maxRetries: 3,
+          retryDelay: 1000,
+          timeout: 10000,
+          ...(config.retrySettings || {})
         }
       }
     }
@@ -1950,6 +1958,7 @@ const getNotificationTypeName = (type) => {
     systemError: '系统错误',
     securityAlert: '安全警报',
     rateLimitRecovery: '限流恢复',
+    modelAnomaly: '模型异常',
     test: '测试通知'
   }
   return names[type] || type
@@ -1962,6 +1971,7 @@ const getNotificationTypeDescription = (type) => {
     systemError: '系统运行错误和故障',
     securityAlert: '安全相关的警报通知',
     rateLimitRecovery: '限流状态恢复时发送提醒',
+    modelAnomaly: 'Console账户返回非Claude模型时告警',
     test: '用于测试Webhook连接是否正常'
   }
   return descriptions[type] || ''
