@@ -16,6 +16,58 @@ const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
 const modelService = require('../services/modelService')
 const router = express.Router()
 
+/**
+ * 规范化 usage 数据，提取 token 信息和模型名称
+ * @param {Object} usageData - 从 SSE 流中收集的 usage 数据
+ * @param {string} fallbackModel - 备选模型名称（从请求中获取）
+ * @returns {Object} 规范化后的 usage 数据
+ */
+function normalizeUsageData(usageData, fallbackModel) {
+  const inputTokens = usageData.input_tokens || 0
+  const outputTokens = usageData.output_tokens || 0
+
+  // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
+  let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
+  let ephemeral5mTokens = 0
+  let ephemeral1hTokens = 0
+
+  if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
+    ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
+    ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
+    cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
+  }
+
+  const cacheReadTokens = usageData.cache_read_input_tokens || 0
+  // 优先使用响应中的 model，如果没有则从请求中获取作为备选
+  const model = usageData.model || fallbackModel || 'unknown'
+
+  // 构建 usage 对象
+  const usageObject = {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_creation_input_tokens: cacheCreateTokens,
+    cache_read_input_tokens: cacheReadTokens
+  }
+
+  // 如果有详细的缓存创建数据，添加到 usage 对象中
+  if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
+    usageObject.cache_creation = {
+      ephemeral_5m_input_tokens: ephemeral5mTokens,
+      ephemeral_1h_input_tokens: ephemeral1hTokens
+    }
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    cacheCreateTokens,
+    cacheReadTokens,
+    model,
+    usageObject,
+    totalTokens: inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens
+  }
+}
+
 function queueRateLimitUpdate(
   rateLimitInfo,
   usageSummary,
@@ -198,42 +250,16 @@ async function handleMessagesRequest(req, res) {
               usageData.input_tokens !== undefined &&
               usageData.output_tokens !== undefined
             ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
-
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
-
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
-              const model = usageData.model || req.body.model || 'unknown'
-
-              // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
+              const {
+                inputTokens,
+                outputTokens,
+                cacheCreateTokens,
+                cacheReadTokens,
+                model,
+                usageObject,
+                totalTokens
+              } = normalizeUsageData(usageData, req.body.model)
               const { accountId: usageAccountId } = usageData
-
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
-
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
-                }
-              }
 
               apiKeyService
                 .recordUsageWithDetails(
@@ -250,12 +276,7 @@ async function handleMessagesRequest(req, res) {
 
               queueRateLimitUpdate(
                 req.rateLimitInfo,
-                {
-                  inputTokens,
-                  outputTokens,
-                  cacheCreateTokens,
-                  cacheReadTokens
-                },
+                { inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens },
                 model,
                 'claude-stream',
                 req.apiKey.useBooster
@@ -263,7 +284,7 @@ async function handleMessagesRequest(req, res) {
 
               usageDataCaptured = true
               logger.api(
-                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
               )
             } else {
               logger.warn(
@@ -292,42 +313,16 @@ async function handleMessagesRequest(req, res) {
               usageData.input_tokens !== undefined &&
               usageData.output_tokens !== undefined
             ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
-
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
-
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
-              const model = usageData.model || req.body.model || 'unknown'
-
-              // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
+              const {
+                inputTokens,
+                outputTokens,
+                cacheCreateTokens,
+                cacheReadTokens,
+                model,
+                usageObject,
+                totalTokens
+              } = normalizeUsageData(usageData, req.body.model)
               const usageAccountId = usageData.accountId
-
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
-
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
-                }
-              }
 
               apiKeyService
                 .recordUsageWithDetails(
@@ -344,12 +339,7 @@ async function handleMessagesRequest(req, res) {
 
               queueRateLimitUpdate(
                 req.rateLimitInfo,
-                {
-                  inputTokens,
-                  outputTokens,
-                  cacheCreateTokens,
-                  cacheReadTokens
-                },
+                { inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens },
                 model,
                 'claude-console-stream',
                 req.apiKey.useBooster
@@ -357,7 +347,7 @@ async function handleMessagesRequest(req, res) {
 
               usageDataCaptured = true
               logger.api(
-                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
               )
             } else {
               logger.warn(
@@ -446,42 +436,20 @@ async function handleMessagesRequest(req, res) {
               usageData.input_tokens !== undefined &&
               usageData.output_tokens !== undefined
             ) {
-              const inputTokens = usageData.input_tokens || 0
-              const outputTokens = usageData.output_tokens || 0
-              // 兼容处理：如果有详细的 cache_creation 对象，使用它；否则使用总的 cache_creation_input_tokens
-              let cacheCreateTokens = usageData.cache_creation_input_tokens || 0
-              let ephemeral5mTokens = 0
-              let ephemeral1hTokens = 0
-
-              if (usageData.cache_creation && typeof usageData.cache_creation === 'object') {
-                ephemeral5mTokens = usageData.cache_creation.ephemeral_5m_input_tokens || 0
-                ephemeral1hTokens = usageData.cache_creation.ephemeral_1h_input_tokens || 0
-                // 总的缓存创建 tokens 是两者之和
-                cacheCreateTokens = ephemeral5mTokens + ephemeral1hTokens
-              }
-
-              const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
-              const model = usageData.model || req.body.model || 'unknown'
+              // 使用统一的 usage 数据规范化函数
+              const normalized = normalizeUsageData(usageData, req.body.model)
+              const {
+                inputTokens,
+                outputTokens,
+                cacheCreateTokens,
+                cacheReadTokens,
+                model,
+                usageObject,
+                totalTokens
+              } = normalized
 
               // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
               const usageAccountId = usageData.accountId
-
-              // 构建 usage 对象以传递给 recordUsage
-              const usageObject = {
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
-                cache_creation_input_tokens: cacheCreateTokens,
-                cache_read_input_tokens: cacheReadTokens
-              }
-
-              // 如果有详细的缓存创建数据，添加到 usage 对象中
-              if (ephemeral5mTokens > 0 || ephemeral1hTokens > 0) {
-                usageObject.cache_creation = {
-                  ephemeral_5m_input_tokens: ephemeral5mTokens,
-                  ephemeral_1h_input_tokens: ephemeral1hTokens
-                }
-              }
 
               apiKeyService
                 .recordUsageWithDetails(
@@ -511,7 +479,7 @@ async function handleMessagesRequest(req, res) {
 
               usageDataCaptured = true
               logger.api(
-                `📊 CCR stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens} tokens`
+                `📊 CCR stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
               )
             } else {
               logger.warn(
