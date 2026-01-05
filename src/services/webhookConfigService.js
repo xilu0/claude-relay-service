@@ -330,6 +330,9 @@ class WebhookConfigService {
         systemError: true, // 系统错误
         securityAlert: true, // 安全警报
         rateLimitRecovery: true, // 限流恢复
+        modelAnomaly: true, // 模型异常告警
+        request_failure_alert: true, // API请求失败告警
+        accountEvent: true, // 账号事件通知
         test: true // 测试通知
       },
       retrySettings: {

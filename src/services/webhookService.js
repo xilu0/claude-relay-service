@@ -540,6 +540,8 @@ class WebhookService {
       securityAlert: '🔒 安全警报',
       rateLimitRecovery: '🎉 限流恢复通知',
       modelAnomaly: '🚨 模型异常告警',
+      request_failure_alert: '🔴 API请求失败告警',
+      accountEvent: '📋 账号事件通知',
       test: '🧪 测试通知'
     }
 
@@ -557,6 +559,8 @@ class WebhookService {
       securityAlert: 'critical',
       rateLimitRecovery: 'active',
       modelAnomaly: 'timeSensitive',
+      request_failure_alert: 'timeSensitive',
+      accountEvent: 'active',
       test: 'passive'
     }
 
@@ -574,6 +578,8 @@ class WebhookService {
       securityAlert: 'alarm',
       rateLimitRecovery: 'success',
       modelAnomaly: 'alarm',
+      request_failure_alert: 'alarm',
+      accountEvent: 'bell',
       test: 'default'
     }
 
@@ -850,6 +856,8 @@ class WebhookService {
       securityAlert: 'red',
       rateLimitRecovery: 'green',
       modelAnomaly: 'red',
+      request_failure_alert: 'red',
+      accountEvent: 'blue',
       test: 'blue'
     }
 
@@ -867,6 +875,8 @@ class WebhookService {
       securityAlert: ':lock:',
       rateLimitRecovery: ':tada:',
       modelAnomaly: ':rotating_light:',
+      request_failure_alert: ':red_circle:',
+      accountEvent: ':clipboard:',
       test: ':test_tube:'
     }
 
@@ -884,6 +894,8 @@ class WebhookService {
       securityAlert: 0xf44336, // 红色
       rateLimitRecovery: 0x4caf50, // 绿色
       modelAnomaly: 0xf44336, // 红色
+      request_failure_alert: 0xf44336, // 红色
+      accountEvent: 0x2196f3, // 蓝色
       test: 0x2196f3 // 蓝色
     }
 

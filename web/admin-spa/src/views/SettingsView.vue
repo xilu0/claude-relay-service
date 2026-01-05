@@ -1959,6 +1959,8 @@ const getNotificationTypeName = (type) => {
     securityAlert: '安全警报',
     rateLimitRecovery: '限流恢复',
     modelAnomaly: '模型异常',
+    request_failure_alert: '请求失败',
+    accountEvent: '账号事件',
     test: '测试通知'
   }
   return names[type] || type
@@ -1972,6 +1974,8 @@ const getNotificationTypeDescription = (type) => {
     securityAlert: '安全相关的警报通知',
     rateLimitRecovery: '限流状态恢复时发送提醒',
     modelAnomaly: 'Console账户返回非Claude模型时告警',
+    request_failure_alert: 'Console账户请求失败时发送告警',
+    accountEvent: '账号创建、更新、删除等事件通知',
     test: '用于测试Webhook连接是否正常'
   }
   return descriptions[type] || ''
