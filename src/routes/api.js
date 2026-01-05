@@ -213,7 +213,8 @@ async function handleMessagesRequest(req, res) {
               }
 
               const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
+              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
+              const model = usageData.model || req.body.model || 'unknown'
 
               // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
               const { accountId: usageAccountId } = usageData
@@ -306,7 +307,8 @@ async function handleMessagesRequest(req, res) {
               }
 
               const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
+              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
+              const model = usageData.model || req.body.model || 'unknown'
 
               // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
               const usageAccountId = usageData.accountId
@@ -459,7 +461,8 @@ async function handleMessagesRequest(req, res) {
               }
 
               const cacheReadTokens = usageData.cache_read_input_tokens || 0
-              const model = usageData.model || 'unknown'
+              // 优先使用响应中的 model，如果没有则从请求中获取作为备选
+              const model = usageData.model || req.body.model || 'unknown'
 
               // 记录真实的token使用量（包含模型信息和所有4种token以及账户ID）
               const usageAccountId = usageData.accountId
