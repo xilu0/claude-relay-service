@@ -26,7 +26,10 @@ class ConsoleAccountRetryService {
   async handleConsoleRequestWithRetry(req, res, apiKeyData, isStream = false, options = {}) {
     const apiKeyId = req.apiKey?.id
     const apiKeyName = req.apiKey?.name || 'Unknown'
-    const { maxRetries = 3, baseDelay = 1000, maxDelay = 30000 } = options
+    // 增加重试参数以最大化可用性（用户可接受更高延迟）
+    // 重试延迟序列（指数退避）: 2s, 4s, 8s, 16s, 32s, 64s, 120s, 120s, 120s
+    // 总最大等待时间约 8.5 分钟（如果有多个账户，每轮尝试所有账户）
+    const { maxRetries = 10, baseDelay = 2000, maxDelay = 120000, usageCallback = null } = options
 
     try {
       // 定义失败回调：发送webhook告警
@@ -98,7 +101,7 @@ class ConsoleAccountRetryService {
                 req.apiKey,
                 res,
                 req.headers,
-                null, // 使用回调处理
+                usageCallback, // 传递usage回调以记录token使用统计
                 account.accountId
               )
 
@@ -121,7 +124,8 @@ class ConsoleAccountRetryService {
               }
             }
 
-            // 非200/201响应：记录错误并继续下一个账户
+            // 非成功响应：记录错误并继续下一个账户
+            // 多账户重试的核心逻辑：任何失败都尝试其他账户，账户异常状态由 relayConsoleMessages 内部标记
             lastError = {
               account,
               statusCode: result.status,
@@ -145,16 +149,17 @@ class ConsoleAccountRetryService {
               throw error
             }
 
-            // 异常：记录并继续下一个账���
+            // 异常：记录并继续下一个账户
+            // 优先使用流式错误中的详细信息（statusCode, errorCode）
             lastError = {
               account,
-              statusCode: null,
-              errorCode: error.code || 'EXCEPTION',
+              statusCode: error.statusCode || null,
+              errorCode: error.errorCode || error.code || 'EXCEPTION',
               message: error.message
             }
 
             logger.warn(
-              `❌ Console account ${account.name} raised exception: ${error.message}, trying next...`
+              `❌ Console account ${account.name} raised exception: [${lastError.errorCode}] ${error.message}${error.statusCode ? ` (HTTP ${error.statusCode})` : ''}, trying next...`
             )
 
             await onFailure(account, lastError, retryRound, maxRetries)

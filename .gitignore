@@ -252,3 +252,4 @@ test.md
 *.png
 response.json
 scripts/query-api-keys.js
+operations.md

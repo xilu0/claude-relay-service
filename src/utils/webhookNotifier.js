@@ -132,6 +132,7 @@ class WebhookNotifier {
         apiKeyName,
         accountId,
         accountName,
+        accountType,
         errorCode,
         statusCode,
         errorMessage,
@@ -139,6 +140,10 @@ class WebhookNotifier {
         maxRetries = 'N/A',
         isFinal = false
       } = options
+
+      // 判断账户选择状态
+      const hasAccountInfo = accountId && accountId !== 'N/A'
+      const accountStatus = hasAccountInfo ? '已选择账户' : '未选择到账户（错误发生在账户选择阶段）'
 
       const alertMessage = {
         timestamp: getISOStringWithTimezone(new Date()),
@@ -153,8 +158,10 @@ class WebhookNotifier {
           name: apiKeyName
         },
         account: {
-          id: accountId || 'N/A',
-          name: accountName || 'N/A'
+          id: accountId || null,
+          name: accountName || null,
+          type: accountType || 'unknown',
+          status: accountStatus
         },
         error: {
           code: errorCode,

@@ -319,7 +319,7 @@ class ClaudeConsoleRelayService {
               modelName: detectedModel,
               apiKeyName: apiKeyData.name || apiKeyData.id,
               apiKeyId: apiKeyData.id,
-              accountId: accountId,
+              accountId,
               accountName: account.name
             })
             .catch((err) => {
@@ -654,39 +654,30 @@ class ClaudeConsoleRelayService {
                 await claudeConsoleAccountService.markAccountOverloaded(accountId)
               }
 
-              // 设置响应头
-              if (!responseStream.headersSent) {
-                responseStream.writeHead(response.status, {
-                  'Content-Type': 'application/json',
-                  'Cache-Control': 'no-cache'
-                })
-              }
+              // ⚠️ 关键改动：不向客户端发送任何内容，而是 reject 让重试机制接管
+              // 构建错误对象，包含重试所需的所有信息
+              const streamError = new Error(
+                `Upstream stream error: ${response.status} from account ${account?.name || accountId}`
+              )
+              streamError.statusCode = response.status
+              streamError.errorData = errorDataForCheck
+              streamError.accountId = accountId
+              streamError.accountName = account?.name
 
-              // 清理并发送错误响应
+              // 尝试解析错误码
               try {
-                const fullErrorData = Buffer.concat(errorChunks).toString()
-                const errorJson = JSON.parse(fullErrorData)
-                const sanitizedError = sanitizeUpstreamError(errorJson)
-
-                // 记录清理后的错误消息（发送给客户端的，完整记录）
-                logger.error(
-                  `🧹 [Stream] [SANITIZED] Error response to client: ${JSON.stringify(sanitizedError)}`
-                )
-
-                if (!responseStream.destroyed) {
-                  responseStream.write(JSON.stringify(sanitizedError))
-                  responseStream.end()
-                }
-              } catch (parseError) {
-                const sanitizedText = sanitizeErrorMessage(errorDataForCheck)
-                logger.error(`🧹 [Stream] [SANITIZED] Error response to client: ${sanitizedText}`)
-
-                if (!responseStream.destroyed) {
-                  responseStream.write(sanitizedText)
-                  responseStream.end()
-                }
+                const errorJson = JSON.parse(errorDataForCheck)
+                streamError.errorCode =
+                  errorJson?.error?.type || errorJson?.error || 'UPSTREAM_ERROR'
+              } catch {
+                streamError.errorCode = 'UPSTREAM_ERROR'
               }
-              resolve() // 不抛出异常，正常完成流处理
+
+              logger.warn(
+                `🔄 [Stream] Rejecting with error for retry mechanism: ${response.status} - ${streamError.errorCode}`
+              )
+
+              reject(streamError) // 让重试机制接管
             })
 
             return
@@ -794,7 +785,7 @@ class ClaudeConsoleRelayService {
                               modelName: detectedModel,
                               apiKeyName: apiKeyData.name || apiKeyData.id,
                               apiKeyId: apiKeyData.id,
-                              accountId: accountId,
+                              accountId,
                               accountName: account.name
                             })
                             .catch((err) => {
@@ -855,7 +846,9 @@ class ClaudeConsoleRelayService {
                             '🎯 [Console] Complete usage data collected:',
                             JSON.stringify(collectedUsageData)
                           )
-                          usageCallback({ ...collectedUsageData, accountId })
+                          if (usageCallback) {
+                            usageCallback({ ...collectedUsageData, accountId })
+                          }
                           finalUsageReported = true
                         }
                       }
@@ -925,7 +918,9 @@ class ClaudeConsoleRelayService {
                   logger.info(
                     `📊 [Console] Saving incomplete usage data via fallback: ${JSON.stringify(collectedUsageData)}`
                   )
-                  usageCallback({ ...collectedUsageData, accountId })
+                  if (usageCallback) {
+                    usageCallback({ ...collectedUsageData, accountId })
+                  }
                   finalUsageReported = true
                 } else {
                   logger.warn(

@@ -752,6 +752,40 @@ class WebhookService {
   formatNotificationDetails(data) {
     const lines = []
 
+    // Request failure alert specific fields (nested structure)
+    if (data.apiKey?.name) {
+      lines.push(`**API Key**: ${data.apiKey.name}`)
+    }
+
+    // 账户选择状态
+    if (data.account?.status) {
+      lines.push(`**账户状态**: ${data.account.status}`)
+    }
+
+    if (data.account?.name) {
+      lines.push(`**账号**: ${data.account.name}`)
+    }
+
+    if (data.account?.type && data.account.type !== 'unknown') {
+      lines.push(`**账户类型**: ${data.account.type}`)
+    }
+
+    if (data.error?.code) {
+      lines.push(`**错误代码**: ${data.error.code}`)
+    }
+
+    if (data.error?.httpStatus && data.error.httpStatus !== 'N/A') {
+      lines.push(`**HTTP状态码**: ${data.error.httpStatus}`)
+    }
+
+    if (data.error?.message) {
+      lines.push(`**错误信息**: ${data.error.message}`)
+    }
+
+    if (data.isFinal === true) {
+      lines.push(`**状态**: 🔴 最终失败（已耗尽所有重试）`)
+    }
+
     // Model anomaly specific fields
     if (data.apiKeyName) {
       lines.push(`**API Key**: ${data.apiKeyName}`)

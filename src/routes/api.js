@@ -14,6 +14,8 @@ const sessionHelper = require('../utils/sessionHelper')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
 const modelService = require('../services/modelService')
+const requestFailureAlertService = require('../services/requestFailureAlertService')
+const consoleAccountRetryService = require('../services/consoleAccountRetryService')
 const router = express.Router()
 
 /**
@@ -99,6 +101,11 @@ function queueRateLimitUpdate(
 
 // 🔧 共享的消息处理函数
 async function handleMessagesRequest(req, res) {
+  // 在函数级别声明这些变量，以便在 catch 块中也能访问
+  let accountId = null
+  let accountType = null
+  let accountName = null
+
   try {
     const startTime = Date.now()
 
@@ -203,15 +210,13 @@ async function handleMessagesRequest(req, res) {
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
-      let accountId
-      let accountType
       try {
         const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
           requestedModel
         )
-        ;({ accountId, accountType } = selection)
+        ;({ accountId, accountType, accountName = null } = selection)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
@@ -295,69 +300,81 @@ async function handleMessagesRequest(req, res) {
           }
         )
       } else if (accountType === 'claude-console') {
-        // Claude Console账号使用Console转发服务（需要传递accountId）
-        await claudeConsoleRelayService.relayStreamRequestWithUsageCapture(
-          req.body,
-          req.apiKey,
-          res,
-          req.headers,
-          (usageData) => {
-            // 回调函数：当检测到完整usage数据时记录真实token使用量
-            logger.info(
-              '🎯 Usage callback triggered with complete data:',
-              JSON.stringify(usageData, null, 2)
-            )
-
-            if (
-              usageData &&
-              usageData.input_tokens !== undefined &&
-              usageData.output_tokens !== undefined
-            ) {
-              const {
-                inputTokens,
-                outputTokens,
-                cacheCreateTokens,
-                cacheReadTokens,
-                model,
-                usageObject,
-                totalTokens
-              } = normalizeUsageData(usageData, req.body.model)
-              const usageAccountId = usageData.accountId
-
-              apiKeyService
-                .recordUsageWithDetails(
-                  req.apiKey.id,
-                  usageObject,
-                  model,
-                  usageAccountId,
-                  'claude-console',
-                  req.apiKey.useBooster
+        // Claude Console账号使用重试服务（尝试所有可用账户，自动告警）
+        logger.debug(`[DEBUG] Using consoleAccountRetryService for stream Console request`)
+        try {
+          await consoleAccountRetryService.handleConsoleRequestWithRetry(
+            req,
+            res,
+            req.apiKey,
+            true /* isStream */,
+            {
+              usageCallback: (usageData) => {
+                // 回调函数：当检测到完整usage数据时记录真实token使用量
+                logger.info(
+                  '🎯 [Console] Usage callback triggered with complete data:',
+                  JSON.stringify(usageData, null, 2)
                 )
-                .catch((error) => {
-                  logger.error('❌ Failed to record stream usage:', error)
-                })
 
-              queueRateLimitUpdate(
-                req.rateLimitInfo,
-                { inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens },
-                model,
-                'claude-console-stream',
-                req.apiKey.useBooster
-              )
+                if (
+                  usageData &&
+                  usageData.input_tokens !== undefined &&
+                  usageData.output_tokens !== undefined
+                ) {
+                  const {
+                    inputTokens,
+                    outputTokens,
+                    cacheCreateTokens,
+                    cacheReadTokens,
+                    model,
+                    usageObject,
+                    totalTokens
+                  } = normalizeUsageData(usageData, req.body.model)
+                  const { accountId: usageAccountId } = usageData
 
-              usageDataCaptured = true
-              logger.api(
-                `📊 Stream usage recorded (real) - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
-              )
-            } else {
-              logger.warn(
-                '⚠️ Usage callback triggered but data is incomplete:',
-                JSON.stringify(usageData)
-              )
+                  apiKeyService
+                    .recordUsageWithDetails(
+                      req.apiKey.id,
+                      usageObject,
+                      model,
+                      usageAccountId,
+                      'claude-console',
+                      req.apiKey.useBooster
+                    )
+                    .catch((error) => {
+                      logger.error('❌ Failed to record Console stream usage:', error)
+                    })
+
+                  queueRateLimitUpdate(
+                    req.rateLimitInfo,
+                    { inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens },
+                    model,
+                    'claude-console-stream',
+                    req.apiKey.useBooster
+                  )
+
+                  usageDataCaptured = true
+                  logger.api(
+                    `📊 Console stream usage recorded - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
+                  )
+                } else {
+                  logger.warn(
+                    '⚠️ [Console] Usage callback triggered but data is incomplete:',
+                    JSON.stringify(usageData)
+                  )
+                }
+              }
             }
-          },
-          accountId
-        )
+          )
+          // 流式请求已处理，标记usage已捕获
+          usageDataCaptured = true
+        } catch (error) {
+          // 重试服务已发送响应，记录错误并确保流关闭
+          logger.error('❌ Console stream retry service error:', error.message)
+          if (!res.finished) {
+            res.end() // 确保流被正确关闭，避免连接挂起
+          }
+        }
       } else if (accountType === 'bedrock') {
         // Bedrock账号使用Bedrock转发服务
         try {
@@ -512,15 +529,13 @@ async function handleMessagesRequest(req, res) {
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
-      let accountId
-      let accountType
       try {
         const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
           requestedModel
         )
-        ;({ accountId, accountType } = selection)
+        ;({ accountId, accountType, accountName = null } = selection)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
@@ -550,18 +565,26 @@ async function handleMessagesRequest(req, res) {
           req.headers
         )
       } else if (accountType === 'claude-console') {
-        // Claude Console账号使用Console转发服务
-        logger.debug(
-          `[DEBUG] Calling claudeConsoleRelayService.relayRequest with accountId: ${accountId}`
-        )
-        response = await claudeConsoleRelayService.relayRequest(
-          req.body,
-          req.apiKey,
+        // Claude Console账号使用重试服务（尝试所有可用账户，自动告警）
+        logger.debug(`[DEBUG] Using consoleAccountRetryService for non-stream Console request`)
+        const handled = await consoleAccountRetryService.handleConsoleRequestWithRetry(
           req,
           res,
-          req.headers,
-          accountId
+          req.apiKey,
+          false /* isStream */
         )
+        if (handled) {
+          // 重试服务已处理响应（成功或503失败）
+          return undefined
+        }
+        // 如果未处理（不应该发生），继续后续流程
+        logger.warn('⚠️ Console retry service did not handle the request, this is unexpected')
+        response = {
+          statusCode: 500,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ error: 'Internal error', message: 'Request not handled' }),
+          accountId
+        }
       } else if (accountType === 'bedrock') {
         // Bedrock账号使用Bedrock转发服务
         try {
@@ -617,6 +640,32 @@ async function handleMessagesRequest(req, res) {
         headers: JSON.stringify(response.headers),
         bodyLength: response.body ? response.body.length : 0
       })
+
+      // 检查非成功状态码，发送告警
+      if (response.statusCode && response.statusCode >= 400) {
+        let errorMessage = 'Unknown error'
+        try {
+          const errorBody = JSON.parse(response.body)
+          errorMessage = errorBody.message || errorBody.error || JSON.stringify(errorBody)
+        } catch {
+          errorMessage = response.body?.substring(0, 200) || 'Unknown error'
+        }
+
+        requestFailureAlertService
+          .sendAlert({
+            apiKeyId: req.apiKey?.id,
+            apiKeyName: req.apiKey?.name,
+            accountId,
+            accountName,
+            accountType: accountType || 'claude',
+            errorCode: `HTTP_${response.statusCode}`,
+            statusCode: response.statusCode,
+            errorMessage
+          })
+          .catch((alertError) => {
+            logger.error('Failed to send request failure alert:', alertError)
+          })
+      }
 
       res.status(response.statusCode)
 
@@ -774,6 +823,22 @@ async function handleMessagesRequest(req, res) {
       code: handledError.code,
       stack: handledError.stack
     })
+
+    // 发送请求失败告警（内置限流防止告警风暴）
+    requestFailureAlertService
+      .sendAlert({
+        apiKeyId: req.apiKey?.id,
+        apiKeyName: req.apiKey?.name,
+        accountId: accountId || handledError.accountId,
+        accountName: accountName || handledError.accountName,
+        accountType: accountType || 'claude',
+        errorCode: handledError.code || 'UNKNOWN_ERROR',
+        statusCode: handledError.statusCode || 500,
+        errorMessage: handledError.message
+      })
+      .catch((alertError) => {
+        logger.error('Failed to send request failure alert:', alertError)
+      })
 
     // 确保在任何情况下都能返回有效的JSON响应
     if (!res.headersSent) {
