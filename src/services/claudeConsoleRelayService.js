@@ -10,6 +10,7 @@ const {
   isAccountDisabledError
 } = require('../utils/errorSanitizer')
 const modelAlertService = require('./modelAlertService')
+const { isValidClaudeModel } = require('../utils/modelValidator')
 
 class ClaudeConsoleRelayService {
   constructor() {
@@ -307,11 +308,12 @@ class ClaudeConsoleRelayService {
         responseBody =
           typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
 
-        // 🔔 Model anomaly check for successful responses (non-blocking)
+        // 🔔 Model anomaly check + replacement for successful responses
         try {
           const responseData =
             typeof response.data === 'string' ? JSON.parse(response.data) : response.data
           const detectedModel = responseData?.model
+          const requestedModel = requestBody.model
 
           // Async non-blocking model check
           modelAlertService
@@ -325,6 +327,15 @@ class ClaudeConsoleRelayService {
             .catch((err) => {
               logger.warn('Model alert check failed:', err.message)
             })
+
+          // 如果模型异常，替换为请求的模型
+          if (detectedModel && requestedModel && !isValidClaudeModel(detectedModel)) {
+            responseData.model = requestedModel
+            responseBody = JSON.stringify(responseData)
+            logger.warn(
+              `🔄 Replaced anomaly model "${detectedModel}" with requested model "${requestedModel}"`
+            )
+          }
         } catch (parseErr) {
           logger.warn('Failed to parse response for model check:', parseErr.message)
         }
@@ -775,23 +786,23 @@ class ClaudeConsoleRelayService {
                             JSON.stringify(collectedUsageData.cache_creation)
                           )
                         }
+                      }
 
-                        // 🔔 Model anomaly check for streaming responses (non-blocking, single check)
-                        if (!modelAlertChecked) {
-                          modelAlertChecked = true
-                          const detectedModel = data.message.model
-                          modelAlertService
-                            .checkAndAlert({
-                              modelName: detectedModel,
-                              apiKeyName: apiKeyData.name || apiKeyData.id,
-                              apiKeyId: apiKeyData.id,
-                              accountId,
-                              accountName: account.name
-                            })
-                            .catch((err) => {
-                              logger.warn('Model alert check failed (stream):', err.message)
-                            })
-                        }
+                      // 🔔 Model anomaly check - 独立条件，不依赖usage字段
+                      if (data.type === 'message_start' && data.message && !modelAlertChecked) {
+                        modelAlertChecked = true
+                        const detectedModel = data.message.model
+                        modelAlertService
+                          .checkAndAlert({
+                            modelName: detectedModel,
+                            apiKeyName: apiKeyData.name || apiKeyData.id,
+                            apiKeyId: apiKeyData.id,
+                            accountId,
+                            accountName: account.name
+                          })
+                          .catch((err) => {
+                            logger.warn('Model alert check failed (stream):', err.message)
+                          })
                       }
 
                       if (data.type === 'message_delta' && data.usage) {
