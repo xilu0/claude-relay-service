@@ -526,7 +526,7 @@ class UnifiedClaudeScheduler {
     const consoleAccounts = await claudeConsoleAccountService.getAllAccounts({
       skipExtendedInfo: true
     })
-    logger.info(`📋 Found ${consoleAccounts.length} total Claude Console accounts`)
+    logger.debug(`📋 Found ${consoleAccounts.length} total Claude Console accounts`)
 
     // 🔢 统计Console账户并发排除情况
     let consoleAccountsEligibleCount = 0 // 符合基本条件的账户数
@@ -672,7 +672,7 @@ class UnifiedClaudeScheduler {
     const bedrockAccountsResult = await bedrockAccountService.getAllAccounts()
     if (bedrockAccountsResult.success) {
       const bedrockAccounts = bedrockAccountsResult.data
-      logger.info(`📋 Found ${bedrockAccounts.length} total Bedrock accounts`)
+      logger.debug(`📋 Found ${bedrockAccounts.length} total Bedrock accounts`)
 
       for (const account of bedrockAccounts) {
         logger.info(
@@ -707,7 +707,7 @@ class UnifiedClaudeScheduler {
     // 获取CCR账户（共享池）- 仅当明确要求包含时
     if (includeCcr) {
       const ccrAccounts = await ccrAccountService.getAllAccounts()
-      logger.info(`📋 Found ${ccrAccounts.length} total CCR accounts`)
+      logger.debug(`📋 Found ${ccrAccounts.length} total CCR accounts`)
 
       for (const account of ccrAccounts) {
         logger.info(
@@ -1504,7 +1504,7 @@ class UnifiedClaudeScheduler {
 
     try {
       const ccrAccounts = await ccrAccountService.getAllAccounts()
-      logger.info(`📋 Found ${ccrAccounts.length} total CCR accounts for CCR-only selection`)
+      logger.debug(`📋 Found ${ccrAccounts.length} total CCR accounts for CCR-only selection`)
 
       for (const account of ccrAccounts) {
         logger.debug(
