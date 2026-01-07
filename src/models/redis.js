@@ -60,6 +60,11 @@ class RedisClient {
   constructor() {
     this.client = null
     this.isConnected = false
+
+    // 🚀 性能优化：账户每日费用缓存（避免频繁 SCAN）
+    // 缓存 TTL 30 秒，在高并发场景下大幅减少 Redis SCAN 操作
+    this._accountDailyCostCache = new Map()
+    this._accountDailyCostCacheTTL = 30000 // 30秒
   }
 
   async connect() {
@@ -1636,28 +1641,43 @@ class RedisClient {
   }
 
   // 💰 计算账户的每日费用（基于模型使用）
+  // 🚀 性能优化：添加 30 秒内存缓存，避免频繁 SCAN 操作
   async getAccountDailyCost(accountId) {
-    const CostCalculator = require('../utils/costCalculator')
     const today = getDateStringInTimezone()
+    const cacheKey = `${accountId}:${today}`
+
+    // 🚀 检查缓存
+    const cached = this._accountDailyCostCache.get(cacheKey)
+    if (cached && Date.now() - cached.time < this._accountDailyCostCacheTTL) {
+      return cached.cost
+    }
+
+    const CostCalculator = require('../utils/costCalculator')
 
     // 获取账户今日所有模型的使用数据
     const pattern = `account_usage:model:daily:${accountId}:*:${today}`
     const modelKeys = await this.scanKeys(pattern)
 
     if (!modelKeys || modelKeys.length === 0) {
+      // 🚀 缓存空结果
+      this._accountDailyCostCache.set(cacheKey, { cost: 0, time: Date.now() })
       return 0
     }
 
     let totalCost = 0
 
-    for (const key of modelKeys) {
+    // 🚀 批量获取所有模型数据（减少 Redis 往返）
+    const getPromises = modelKeys.map((key) => this.client.hgetall(key))
+    const results = await Promise.all(getPromises)
+
+    for (let i = 0; i < modelKeys.length; i++) {
+      const key = modelKeys[i]
+      const modelUsage = results[i]
+
       // 从key中解析模型名称
       // 格式：account_usage:model:daily:{accountId}:{model}:{date}
       const parts = key.split(':')
       const model = parts[4] // 模型名在第5个位置（索引4）
-
-      // 获取该模型的使用数据
-      const modelUsage = await this.client.hgetall(key)
 
       if (
         modelUsage &&
@@ -1680,6 +1700,19 @@ class RedisClient {
         logger.debug(
           `💰 Account ${accountId} daily cost for model ${model}: $${costResult.costs.total}, outputImages: ${usage.output_images}`
         )
+      }
+    }
+
+    // 🚀 缓存结果
+    this._accountDailyCostCache.set(cacheKey, { cost: totalCost, time: Date.now() })
+
+    // 🧹 清理过期缓存项（防止内存泄漏）
+    if (this._accountDailyCostCache.size > 1000) {
+      const now = Date.now()
+      for (const [k, v] of this._accountDailyCostCache) {
+        if (now - v.time > this._accountDailyCostCacheTTL) {
+          this._accountDailyCostCache.delete(k)
+        }
       }
     }
 
