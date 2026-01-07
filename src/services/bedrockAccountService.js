@@ -12,11 +12,22 @@ class BedrockAccountService {
     this.ENCRYPTION_ALGORITHM = 'aes-256-cbc'
     this.ENCRYPTION_SALT = 'salt'
 
+    // Redis键前缀和索引
+    this.ACCOUNT_KEY_PREFIX = 'bedrock_account:'
+    // 🚀 性能优化：账户索引键（避免 SCAN 操作）
+    this.ACCOUNT_INDEX_KEY = 'bedrock_account_index'
+
     // 🚀 性能优化：缓存派生的加密密钥，避免每次重复计算
     this._encryptionKeyCache = null
 
     // 🔄 解密结果缓存，提高解密性能
     this._decryptCache = new LRUCache(500)
+
+    // 🚀 性能优化：账户列表缓存（减少 Redis 查询）
+    // TTL 5秒，在高并发场景下大幅减少 Redis 请求
+    this._accountListCache = null
+    this._accountListCacheTime = 0
+    this._accountListCacheTTL = 5000 // 5秒缓存
 
     // 🧹 定期清理缓存（每10分钟）
     setInterval(
@@ -26,6 +37,18 @@ class BedrockAccountService {
       },
       10 * 60 * 1000
     )
+  }
+
+  // 🚀 检查账户列表缓存是否有效
+  _isAccountListCacheValid() {
+    if (!this._accountListCache) return false
+    return Date.now() - this._accountListCacheTime < this._accountListCacheTTL
+  }
+
+  // 🚀 使缓存失效
+  _invalidateAccountListCache() {
+    this._accountListCache = null
+    this._accountListCacheTime = 0
   }
 
   // 🏢 创建Bedrock账户
@@ -73,6 +96,11 @@ class BedrockAccountService {
 
     const client = redis.getClientSafe()
     await client.set(`bedrock_account:${accountId}`, JSON.stringify(accountData))
+
+    // 🚀 添加到索引 Set
+    await client.sadd(this.ACCOUNT_INDEX_KEY, accountId)
+    // 🚀 使缓存失效
+    this._invalidateAccountListCache()
 
     logger.info(`✅ 创建Bedrock账户成功 - ID: ${accountId}, 名称: ${name}, 区域: ${region}`)
 
@@ -126,13 +154,45 @@ class BedrockAccountService {
   // 📋 获取所有账户列表
   async getAllAccounts() {
     try {
-      const client = redis.getClientSafe()
-      const keys = await redis.scanKeys('bedrock_account:*')
-      const accounts = []
+      // 🚀 性能优化：优先使用内存缓存
+      if (this._isAccountListCacheValid()) {
+        return { success: true, data: this._accountListCache }
+      }
 
-      for (const key of keys) {
-        const accountData = await client.get(key)
-        if (accountData) {
+      const client = redis.getClientSafe()
+
+      // 🚀 性能优化：优先使用索引 Set（避免 SCAN 操作）
+      let accountIds = await client.smembers(this.ACCOUNT_INDEX_KEY)
+
+      // 如果索引为空，回退到 SCAN 并重建索引（兼容旧数据）
+      if (!accountIds || accountIds.length === 0) {
+        logger.info('📋 Bedrock account index empty, rebuilding from SCAN...')
+        const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
+        accountIds = keys.map((k) => k.replace(this.ACCOUNT_KEY_PREFIX, ''))
+
+        // 重建索引
+        if (accountIds.length > 0) {
+          await client.sadd(this.ACCOUNT_INDEX_KEY, ...accountIds)
+          logger.info(`📋 Rebuilt Bedrock account index with ${accountIds.length} accounts`)
+        }
+      }
+
+      const accounts = []
+      const ghostAccountIds = []
+
+      // 🚀 性能优化：批量获取账户数据
+      if (accountIds.length > 0) {
+        const getPromises = accountIds.map((id) => client.get(`${this.ACCOUNT_KEY_PREFIX}${id}`))
+        const results = await Promise.all(getPromises)
+
+        for (let i = 0; i < accountIds.length; i++) {
+          const accountData = results[i]
+
+          if (!accountData) {
+            ghostAccountIds.push(accountIds[i])
+            continue
+          }
+
           const account = JSON.parse(accountData)
 
           // 返回给前端时，不包含敏感信息，只显示掩码
@@ -160,6 +220,12 @@ class BedrockAccountService {
         }
       }
 
+      // 🛡️ 清理幽灵账户（索引中存在但数据不存在的账户）
+      if (ghostAccountIds.length > 0) {
+        logger.warn(`⚠️ Cleaning up ${ghostAccountIds.length} ghost Bedrock accounts from index`)
+        await client.srem(this.ACCOUNT_INDEX_KEY, ...ghostAccountIds)
+      }
+
       // 按优先级和名称排序
       accounts.sort((a, b) => {
         if (a.priority !== b.priority) {
@@ -167,6 +233,10 @@ class BedrockAccountService {
         }
         return a.name.localeCompare(b.name)
       })
+
+      // 🚀 更新缓存
+      this._accountListCache = accounts
+      this._accountListCacheTime = Date.now()
 
       logger.debug(`📋 获取所有Bedrock账户 - 共 ${accounts.length} 个`)
 
@@ -245,6 +315,9 @@ class BedrockAccountService {
 
       await client.set(`bedrock_account:${accountId}`, JSON.stringify(account))
 
+      // 🚀 使缓存失效
+      this._invalidateAccountListCache()
+
       logger.info(`✅ 更新Bedrock账户成功 - ID: ${accountId}, 名称: ${account.name}`)
 
       return {
@@ -280,6 +353,11 @@ class BedrockAccountService {
 
       const client = redis.getClientSafe()
       await client.del(`bedrock_account:${accountId}`)
+
+      // 🚀 从索引中移除
+      await client.srem(this.ACCOUNT_INDEX_KEY, accountId)
+      // 🚀 使缓存失效
+      this._invalidateAccountListCache()
 
       // 清理账号相关的使用统计数据，防止产生孤立数据
       await redis.cleanupAccountUsageData(accountId)
