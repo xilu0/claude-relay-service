@@ -522,8 +522,10 @@ class UnifiedClaudeScheduler {
       }
     }
 
-    // 获取Claude Console账户
-    const consoleAccounts = await claudeConsoleAccountService.getAllAccounts()
+    // 获取Claude Console账户（使用 skipExtendedInfo 启用缓存，减少 Redis 查询）
+    const consoleAccounts = await claudeConsoleAccountService.getAllAccounts({
+      skipExtendedInfo: true
+    })
     logger.info(`📋 Found ${consoleAccounts.length} total Claude Console accounts`)
 
     // 🔢 统计Console账户并发排除情况

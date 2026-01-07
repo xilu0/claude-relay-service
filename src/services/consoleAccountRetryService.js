@@ -26,10 +26,9 @@ class ConsoleAccountRetryService {
   async handleConsoleRequestWithRetry(req, res, apiKeyData, isStream = false, options = {}) {
     const apiKeyId = req.apiKey?.id
     const apiKeyName = req.apiKey?.name || 'Unknown'
-    // 增加重试参数以最大化可用性（用户可接受更高延迟）
-    // 重试延迟序列（指数退避）: 2s, 4s, 8s, 16s, 32s, 64s, 120s, 120s, 120s
-    // 总最大等待时间约 8.5 分钟（如果有多个账户，每轮尝试所有账户）
-    const { maxRetries = 10, baseDelay = 2000, maxDelay = 120000, usageCallback = null } = options
+    // 重试参数：默认只重试 1 轮，减少 Redis 查询压力
+    // 每轮尝试所有可用账户，1 轮通常足够（多账户场景）
+    const { maxRetries = 1, baseDelay = 2000, maxDelay = 120000, usageCallback = null } = options
 
     try {
       // 定义失败回调：发送webhook告警
