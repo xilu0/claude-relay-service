@@ -15,6 +15,8 @@ class ClaudeConsoleAccountService {
     // Redis键前缀
     this.ACCOUNT_KEY_PREFIX = 'claude_console_account:'
     this.SHARED_ACCOUNTS_KEY = 'shared_claude_console_accounts'
+    // 🚀 性能优化：账户索引键（避免 SCAN 操作）
+    this.ACCOUNT_INDEX_KEY = 'claude_console_account_index'
 
     // 🚀 性能优化：缓存派生的加密密钥，避免每次重复计算
     // scryptSync 是 CPU 密集型操作，缓存可以减少 95%+ 的 CPU 密集型操作
@@ -22,6 +24,12 @@ class ClaudeConsoleAccountService {
 
     // 🔄 解密结果缓存，提高解密性能
     this._decryptCache = new LRUCache(500)
+
+    // 🚀 性能优化：账户列表缓存（减少 Redis 查询）
+    // TTL 5秒，在高并发场景下大幅减少 Redis 请求
+    this._accountListCache = null
+    this._accountListCacheTime = 0
+    this._accountListCacheTTL = 5000 // 5秒缓存
 
     // 🧹 定期清理缓存（每10分钟）
     setInterval(
@@ -124,12 +132,17 @@ class ClaudeConsoleAccountService {
     )
     logger.debug(`[DEBUG] Account data to save: ${JSON.stringify(accountData, null, 2)}`)
 
+    // 🚀 使用 pipeline 原子性更新账户数据和索引（避免 SCAN 操作）
     await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, accountData)
+    await client.sadd(this.ACCOUNT_INDEX_KEY, accountId)
 
     // 如果是共享账户，添加到共享账户集合
     if (accountType === 'shared') {
       await client.sadd(this.SHARED_ACCOUNTS_KEY, accountId)
     }
+
+    // 🧹 清除账户列表缓存
+    this._invalidateAccountListCache()
 
     logger.success(`🏢 Created Claude Console account: ${name} (${accountId})`)
 
@@ -159,76 +172,123 @@ class ClaudeConsoleAccountService {
 
   // 📋 获取所有Claude Console账户
   // options.skipExtendedInfo: 跳过额外的 Redis 查询（并发计数等），用于 Dashboard 等只需要基本信息的场景
+  // options.skipCache: 跳过内存缓存，强制从 Redis 获取最新数据
   async getAllAccounts(options = {}) {
-    const { skipExtendedInfo = false } = options
+    const { skipExtendedInfo = false, skipCache = false } = options
     try {
+      // 🚀 性能优化：优先使用内存缓存（仅当 skipExtendedInfo 为 true 时使用缓存）
+      // skipExtendedInfo 场景通常是调度器高频调用，最适合使用缓存
+      if (skipExtendedInfo && !skipCache && this._isAccountListCacheValid()) {
+        return this._accountListCache
+      }
+
       const client = redis.getClientSafe()
-      const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
+
+      // 🚀 性能优化：优先使用索引 Set（避免 SCAN 操作）
+      let accountIds = await client.smembers(this.ACCOUNT_INDEX_KEY)
+
+      // 如果索引为空，回退到 SCAN 并重建索引（兼容旧数据）
+      if (!accountIds || accountIds.length === 0) {
+        logger.info('📋 Account index empty, rebuilding from SCAN...')
+        const keys = await redis.scanKeys(`${this.ACCOUNT_KEY_PREFIX}*`)
+        accountIds = keys.map((k) => k.replace(this.ACCOUNT_KEY_PREFIX, ''))
+
+        // 重建索引
+        if (accountIds.length > 0) {
+          await client.sadd(this.ACCOUNT_INDEX_KEY, ...accountIds)
+          logger.info(`📋 Rebuilt account index with ${accountIds.length} accounts`)
+        }
+      }
+
       const accounts = []
       const ghostAccountIds = []
 
-      for (const key of keys) {
-        const accountData = await client.hgetall(key)
-
-        // 🛡️ 使用统一的验证方法检测幽灵账户
-        if (!this.isValidAccountData(accountData)) {
-          const accountId = key.replace(this.ACCOUNT_KEY_PREFIX, '')
-          ghostAccountIds.push(accountId)
-          logger.warn(`⚠️ Detected ghost account with invalid data: ${accountId}`)
-          continue // 跳过无效账户
+      // 🚀 性能优化：批量获取账户数据（使用 pipeline）
+      if (accountIds.length > 0) {
+        const pipeline = client.pipeline()
+        for (const id of accountIds) {
+          pipeline.hgetall(`${this.ACCOUNT_KEY_PREFIX}${id}`)
         }
+        const results = await pipeline.exec()
 
-        // 获取限流状态信息
-        const rateLimitInfo = this._getRateLimitInfo(accountData)
+        for (let i = 0; i < accountIds.length; i++) {
+          const [err, accountData] = results[i]
+          if (err) {
+            logger.error(`❌ Error fetching account ${accountIds[i]}:`, err)
+            continue
+          }
 
-        // 获取实时并发计数（当 skipExtendedInfo 为 true 时跳过）
-        const activeTaskCount = skipExtendedInfo
-          ? 0
-          : await redis.getConsoleAccountConcurrency(accountData.id)
+          // 🛡️ 使用统一的验证方法检测幽灵账户
+          if (!this.isValidAccountData(accountData)) {
+            ghostAccountIds.push(accountIds[i])
+            logger.warn(`⚠️ Detected ghost account with invalid data: ${accountIds[i]}`)
+            continue // 跳过无效账户
+          }
 
-        accounts.push({
-          id: accountData.id,
-          platform: accountData.platform,
-          name: accountData.name,
-          description: accountData.description,
-          apiUrl: accountData.apiUrl,
-          priority: parseInt(accountData.priority) || 50,
-          supportedModels: JSON.parse(accountData.supportedModels || '[]'),
-          userAgent: accountData.userAgent,
-          rateLimitDuration: Number.isNaN(parseInt(accountData.rateLimitDuration))
-            ? 60
-            : parseInt(accountData.rateLimitDuration),
-          isActive: accountData.isActive === 'true',
-          proxy: accountData.proxy ? JSON.parse(accountData.proxy) : null,
-          accountType: accountData.accountType || 'shared',
-          createdAt: accountData.createdAt,
-          lastUsedAt: accountData.lastUsedAt,
-          status: accountData.status || 'active',
-          errorMessage: accountData.errorMessage,
-          rateLimitInfo,
-          schedulable: accountData.schedulable !== 'false', // 默认为true，只有明确设置为false才不可调度
+          // 获取限流状态信息
+          const rateLimitInfo = this._getRateLimitInfo(accountData)
 
-          // ✅ 前端显示订阅过期时间（业务字段）
-          expiresAt: accountData.subscriptionExpiresAt || null,
+          accounts.push({
+            id: accountData.id,
+            platform: accountData.platform,
+            name: accountData.name,
+            description: accountData.description,
+            apiUrl: accountData.apiUrl,
+            priority: parseInt(accountData.priority) || 50,
+            supportedModels: JSON.parse(accountData.supportedModels || '[]'),
+            userAgent: accountData.userAgent,
+            rateLimitDuration: Number.isNaN(parseInt(accountData.rateLimitDuration))
+              ? 60
+              : parseInt(accountData.rateLimitDuration),
+            isActive: accountData.isActive === 'true',
+            proxy: accountData.proxy ? JSON.parse(accountData.proxy) : null,
+            accountType: accountData.accountType || 'shared',
+            createdAt: accountData.createdAt,
+            lastUsedAt: accountData.lastUsedAt,
+            status: accountData.status || 'active',
+            errorMessage: accountData.errorMessage,
+            rateLimitInfo,
+            schedulable: accountData.schedulable !== 'false', // 默认为true，只有明确设置为false才不可调度
 
-          // 额度管理相关
-          dailyQuota: parseFloat(accountData.dailyQuota || '0'),
-          dailyUsage: parseFloat(accountData.dailyUsage || '0'),
-          lastResetDate: accountData.lastResetDate || '',
-          quotaResetTime: accountData.quotaResetTime || '00:00',
-          quotaStoppedAt: accountData.quotaStoppedAt || null,
+            // ✅ 前端显示订阅过期时间（业务字段）
+            expiresAt: accountData.subscriptionExpiresAt || null,
 
-          // 并发控制相关
-          maxConcurrentTasks: parseInt(accountData.maxConcurrentTasks) || 0,
-          activeTaskCount
+            // 额度管理相关
+            dailyQuota: parseFloat(accountData.dailyQuota || '0'),
+            dailyUsage: parseFloat(accountData.dailyUsage || '0'),
+            lastResetDate: accountData.lastResetDate || '',
+            quotaResetTime: accountData.quotaResetTime || '00:00',
+            quotaStoppedAt: accountData.quotaStoppedAt || null,
+
+            // 并发控制相关
+            maxConcurrentTasks: parseInt(accountData.maxConcurrentTasks) || 0,
+            activeTaskCount: 0 // 占位，后面批量获取
+          })
+        }
+      }
+
+      // 🚀 批量获取并发计数（使用 Promise.all 并行执行，避免 N+1 问题）
+      if (!skipExtendedInfo && accounts.length > 0) {
+        const concurrencyPromises = accounts.map((acc) =>
+          redis.getConsoleAccountConcurrency(acc.id)
+        )
+        const concurrencyResults = await Promise.all(concurrencyPromises)
+        accounts.forEach((acc, index) => {
+          acc.activeTaskCount = concurrencyResults[index]
         })
       }
 
-      // 🧹 在后台清理检测到的幽灵账户
+      // 🧹 在后台清理检测到的幽灵账户（同时从索引中移除）
       if (ghostAccountIds.length > 0) {
         this.cleanupGhostAccounts(ghostAccountIds).catch((err) => {
           logger.error('Failed to cleanup ghost accounts:', err)
         })
+      }
+
+      // 🚀 更新内存缓存（仅当 skipExtendedInfo 为 true 时缓存）
+      if (skipExtendedInfo) {
+        this._accountListCache = accounts
+        this._accountListCacheTime = Date.now()
       }
 
       return accounts
@@ -425,6 +485,9 @@ class ClaudeConsoleAccountService {
 
       await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, updatedData)
 
+      // 🧹 清除账户列表缓存
+      this._invalidateAccountListCache()
+
       logger.success(`📝 Updated Claude Console account: ${accountId}`)
 
       return { success: true }
@@ -444,8 +507,10 @@ class ClaudeConsoleAccountService {
         throw new Error('Account not found')
       }
 
-      // 从Redis删除
+      // 从Redis删除账户数据和索引
       await client.del(`${this.ACCOUNT_KEY_PREFIX}${accountId}`)
+      // 🚀 从账户索引中移除
+      await client.srem(this.ACCOUNT_INDEX_KEY, accountId)
 
       // 从共享账户集合中移除
       if (account.accountType === 'shared') {
@@ -454,6 +519,9 @@ class ClaudeConsoleAccountService {
 
       // 清理账号相关的使用统计数据，防止产生孤立数据
       await redis.cleanupAccountUsageData(accountId)
+
+      // 🧹 清除账户列表缓存
+      this._invalidateAccountListCache()
 
       logger.success(`🗑️ Deleted Claude Console account: ${accountId}`)
 
@@ -1127,12 +1195,35 @@ class ClaudeConsoleAccountService {
     const client = redis.getClientSafe()
     for (const accountId of accountIds) {
       try {
+        // 删除账户数据
         await client.del(`${this.ACCOUNT_KEY_PREFIX}${accountId}`)
+        // 🚀 从索引中移除
+        await client.srem(this.ACCOUNT_INDEX_KEY, accountId)
+        // 从共享账户集合中移除（如果存在）
+        await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
         logger.info(`🧹 Cleaned up ghost account: ${accountId}`)
       } catch (error) {
         logger.error(`❌ Failed to cleanup ghost account ${accountId}:`, error)
       }
     }
+    // 🧹 清除账户列表缓存
+    if (accountIds.length > 0) {
+      this._invalidateAccountListCache()
+    }
+  }
+
+  // 🚀 检查账户列表缓存是否有效
+  _isAccountListCacheValid() {
+    if (!this._accountListCache) {
+      return false
+    }
+    return Date.now() - this._accountListCacheTime < this._accountListCacheTTL
+  }
+
+  // 🧹 使账户列表缓存失效
+  _invalidateAccountListCache() {
+    this._accountListCache = null
+    this._accountListCacheTime = 0
   }
 
   // 🌐 创建代理agent（使用统一的代理工具）

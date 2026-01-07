@@ -2013,9 +2013,15 @@ class RedisClient {
   }
 
   // 🤖 Droid 账户相关操作
+  // 🚀 性能优化：账户索引键（避免 SCAN 操作）
+  static DROID_ACCOUNT_INDEX = 'droid:accounts:index'
+
   async setDroidAccount(accountId, accountData) {
     const key = `droid:account:${accountId}`
-    await this.client.hset(key, accountData)
+    const client = this.getClientSafe()
+    // 同时更新账户数据和索引
+    await client.hset(key, accountData)
+    await client.sadd(RedisClient.DROID_ACCOUNT_INDEX, accountId)
   }
 
   async getDroidAccount(accountId) {
@@ -2024,12 +2030,45 @@ class RedisClient {
   }
 
   async getAllDroidAccounts() {
-    const keys = await this.scanKeys('droid:account:*')
+    const client = this.getClientSafe()
+
+    // 🚀 优先使用索引 Set（避免 SCAN 操作）
+    let accountIds = await client.smembers(RedisClient.DROID_ACCOUNT_INDEX)
+
+    // 如果索引为空，回退到 SCAN 并重建索引（兼容旧数据）
+    if (!accountIds || accountIds.length === 0) {
+      const keys = await this.scanKeys('droid:account:*')
+      accountIds = keys.map((k) => k.replace('droid:account:', ''))
+
+      // 重建索引
+      if (accountIds.length > 0) {
+        await client.sadd(RedisClient.DROID_ACCOUNT_INDEX, ...accountIds)
+        logger.info(`📋 Rebuilt Droid account index with ${accountIds.length} accounts`)
+      }
+    }
+
+    // 🚀 批量获取账户数据（使用 Promise.all 并行执行）
     const accounts = []
-    for (const key of keys) {
-      const accountData = await this.client.hgetall(key)
-      if (accountData && Object.keys(accountData).length > 0) {
-        accounts.push({ id: key.replace('droid:account:', ''), ...accountData })
+    const ghostIds = []
+    if (accountIds.length > 0) {
+      const dataPromises = accountIds.map((id) => client.hgetall(`droid:account:${id}`))
+      const results = await Promise.all(dataPromises)
+
+      for (let i = 0; i < accountIds.length; i++) {
+        const accountData = results[i]
+        if (accountData && Object.keys(accountData).length > 0) {
+          accounts.push({ id: accountIds[i], ...accountData })
+        } else {
+          // 🧹 记录幽灵账户，稍后清理
+          ghostIds.push(accountIds[i])
+        }
+      }
+
+      // 🧹 后台清理幽灵账户索引
+      if (ghostIds.length > 0) {
+        Promise.all(ghostIds.map((id) => client.srem(RedisClient.DROID_ACCOUNT_INDEX, id))).catch(
+          (err) => logger.error('Failed to cleanup Droid ghost accounts:', err)
+        )
       }
     }
     return accounts
@@ -2037,12 +2076,20 @@ class RedisClient {
 
   async deleteDroidAccount(accountId) {
     const key = `droid:account:${accountId}`
-    return await this.client.del(key)
+    const client = this.getClientSafe()
+    // 同时删除账户数据和索引
+    await client.del(key)
+    await client.srem(RedisClient.DROID_ACCOUNT_INDEX, accountId)
   }
+
+  // 🚀 性能优化：OpenAI 账户索引键
+  static OPENAI_ACCOUNT_INDEX = 'openai:accounts:index'
 
   async setOpenAiAccount(accountId, accountData) {
     const key = `openai:account:${accountId}`
-    await this.client.hset(key, accountData)
+    const client = this.getClientSafe()
+    await client.hset(key, accountData)
+    await client.sadd(RedisClient.OPENAI_ACCOUNT_INDEX, accountId)
   }
   async getOpenAiAccount(accountId) {
     const key = `openai:account:${accountId}`
@@ -2050,16 +2097,50 @@ class RedisClient {
   }
   async deleteOpenAiAccount(accountId) {
     const key = `openai:account:${accountId}`
-    return await this.client.del(key)
+    const client = this.getClientSafe()
+    await client.del(key)
+    await client.srem(RedisClient.OPENAI_ACCOUNT_INDEX, accountId)
   }
 
   async getAllOpenAIAccounts() {
-    const keys = await this.scanKeys('openai:account:*')
+    const client = this.getClientSafe()
+
+    // 🚀 优先使用索引 Set
+    let accountIds = await client.smembers(RedisClient.OPENAI_ACCOUNT_INDEX)
+
+    // 如果索引为空，回退到 SCAN 并重建索引
+    if (!accountIds || accountIds.length === 0) {
+      const keys = await this.scanKeys('openai:account:*')
+      accountIds = keys.map((k) => k.replace('openai:account:', ''))
+
+      if (accountIds.length > 0) {
+        await client.sadd(RedisClient.OPENAI_ACCOUNT_INDEX, ...accountIds)
+        logger.info(`📋 Rebuilt OpenAI account index with ${accountIds.length} accounts`)
+      }
+    }
+
+    // 🚀 批量获取账户数据（使用 Promise.all 并行执行）
     const accounts = []
-    for (const key of keys) {
-      const accountData = await this.client.hgetall(key)
-      if (accountData && Object.keys(accountData).length > 0) {
-        accounts.push({ id: key.replace('openai:account:', ''), ...accountData })
+    const ghostIds = []
+    if (accountIds.length > 0) {
+      const dataPromises = accountIds.map((id) => client.hgetall(`openai:account:${id}`))
+      const results = await Promise.all(dataPromises)
+
+      for (let i = 0; i < accountIds.length; i++) {
+        const accountData = results[i]
+        if (accountData && Object.keys(accountData).length > 0) {
+          accounts.push({ id: accountIds[i], ...accountData })
+        } else {
+          // 🧹 记录幽灵账户，稍后清理
+          ghostIds.push(accountIds[i])
+        }
+      }
+
+      // 🧹 后台清理幽灵账户索引
+      if (ghostIds.length > 0) {
+        Promise.all(ghostIds.map((id) => client.srem(RedisClient.OPENAI_ACCOUNT_INDEX, id))).catch(
+          (err) => logger.error('Failed to cleanup OpenAI ghost accounts:', err)
+        )
       }
     }
     return accounts
