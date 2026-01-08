@@ -41,7 +41,9 @@ class BedrockAccountService {
 
   // 🚀 检查账户列表缓存是否有效
   _isAccountListCacheValid() {
-    if (!this._accountListCache) return false
+    if (!this._accountListCache) {
+      return false
+    }
     return Date.now() - this._accountListCacheTime < this._accountListCacheTTL
   }
 

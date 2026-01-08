@@ -319,6 +319,14 @@ class UnifiedClaudeScheduler {
       // 选择第一个账户
       const selectedAccount = sortedAccounts[0]
 
+      // 更新账户的最后使用时间（仅 Claude Console 账户需要，确保同优先级账户轮流被选中）
+      // 使用 fire-and-forget 模式，避免阻塞当前请求（这是非关键的元数据更新）
+      if (selectedAccount.accountType === 'claude-console') {
+        claudeConsoleAccountService.updateLastUsedAt(selectedAccount.accountId).catch((err) => {
+          logger.error('❌ Failed to background update lastUsedAt:', err)
+        })
+      }
+
       // 如果有会话哈希，建立新的映射
       if (sessionHash) {
         await this._setSessionMapping(

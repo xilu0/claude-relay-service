@@ -1226,6 +1226,32 @@ class ClaudeConsoleAccountService {
     this._accountListCacheTime = 0
   }
 
+  /**
+   * 📝 更新账户的最后使用时间
+   * 在账户被选中用于新请求时调用，确保同优先级账户能轮流被选中
+   * @param {string} accountId - 账户ID
+   */
+  async updateLastUsedAt(accountId) {
+    try {
+      const client = redis.getClientSafe()
+      const now = new Date().toISOString()
+      await client.hset(`${this.ACCOUNT_KEY_PREFIX}${accountId}`, 'lastUsedAt', now)
+
+      // 🚀 原地更新缓存（避免清除整个缓存导致性能问题）
+      if (this._accountListCache) {
+        const account = this._accountListCache.find((acc) => acc.id === accountId)
+        if (account) {
+          account.lastUsedAt = now
+        }
+      }
+
+      logger.debug(`📝 Updated lastUsedAt for Console account: ${accountId}`)
+    } catch (error) {
+      logger.error(`❌ Failed to update lastUsedAt for account ${accountId}:`, error)
+      // 不抛出错误，这是非关键操作
+    }
+  }
+
   // 🌐 创建代理agent（使用统一的代理工具）
   _createProxyAgent(proxyConfig) {
     const proxyAgent = ProxyHelper.createProxyAgent(proxyConfig)
