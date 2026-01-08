@@ -247,7 +247,7 @@ class ConsoleAccountRetryService {
    * 获取所有可用的Claude Console账户
    * @param {Object} apiKeyData - API Key数据
    * @param {string} requestedModel - 请求的模型
-   * @returns {Promise<Array>} 可用账户列表
+   * @returns {Promise<Array>} 可用账户列表（按优先级排序）
    */
   async _getAvailableConsoleAccounts(apiKeyData, requestedModel = null) {
     try {
@@ -259,7 +259,12 @@ class ConsoleAccountRetryService {
       )
 
       // 过滤出只有Console类型的账户
-      return availableAccounts.filter((acc) => acc.accountType === 'claude-console')
+      const consoleAccounts = availableAccounts.filter(
+        (acc) => acc.accountType === 'claude-console'
+      )
+
+      // 🔧 按优先级排序（复用调度器的排序逻辑，确保高优先级账户先被尝试）
+      return unifiedClaudeScheduler._sortAccountsByPriority(consoleAccounts)
     } catch (error) {
       logger.error('Failed to get available Console accounts:', error)
       return []
