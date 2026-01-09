@@ -278,6 +278,12 @@ update-docker-env:
 restart-claude-relay: 
 	ssh cc2 "cd /home/ubuntu/cc-club && docker compose up --pull always -d claude-relay"
 
+get-compose:
+	scp cc2:/home/ubuntu/cc-club/compose.yml ./docker-compose.yml
+
+put-compose:
+	scp docker-compose.yml cc2:/home/ubuntu/cc-club/compose.yml
+
 update: build-docker restart-claude-relay
 
 localstart:

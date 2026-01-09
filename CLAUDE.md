@@ -590,6 +590,8 @@ NEVER proactively create documentation files (\*.md) or README files. Only creat
 - Redis (hash storage with `claude_console_account:{id}` key pattern) (001-fix-ghost-accounts)
 - Node.js 18+ (ES2020+) + Express.js 4.18.2, ioredis 5.3.2, axios 1.6.0, winston 3.11.0 (001-console-model-alert)
 - Redis (existing infrastructure, ioredis client) (001-console-model-alert)
+- Node.js 18+ (ES2020+) + Express.js 4.18.2, ioredis 5.3.2, winston 3.11.0 (001-fix-group-scheduling)
+- Redis (hash storage with `account_group:{id}` and `account_group_members:{id}` patterns) (001-fix-group-scheduling)
 
 ## Recent Changes
 - 001-image-billing: Added Node.js 18+ + Express.js, ioredis, axios, winston

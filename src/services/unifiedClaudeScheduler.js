@@ -7,9 +7,18 @@ const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
 
+// 🎯 Group scheduling error codes for structured error handling
+const GROUP_SCHEDULING_ERRORS = {
+  GROUP_NOT_FOUND: 'GROUP_NOT_FOUND',
+  GROUP_EMPTY: 'GROUP_EMPTY',
+  NO_AVAILABLE_ACCOUNTS_IN_GROUP: 'NO_AVAILABLE_ACCOUNTS_IN_GROUP',
+  GROUP_DEDICATED_RATE_LIMITED: 'GROUP_DEDICATED_RATE_LIMITED'
+}
+
 class UnifiedClaudeScheduler {
   constructor() {
     this.SESSION_MAPPING_PREFIX = 'unified_claude_session_mapping:'
+    this.GROUP_SCHEDULING_ERRORS = GROUP_SCHEDULING_ERRORS
   }
 
   // 🔧 辅助方法：检查账户是否可调度（兼容字符串和布尔值）
@@ -163,15 +172,24 @@ class UnifiedClaudeScheduler {
         // 检查是否是分组
         if (apiKeyData.claudeAccountId.startsWith('group:')) {
           const groupId = apiKeyData.claudeAccountId.replace('group:', '')
-          logger.info(
-            `🎯 API key ${apiKeyData.name} is bound to group ${groupId}, selecting from group`
-          )
-          return await this.selectAccountFromGroup(
-            groupId,
-            sessionHash,
-            effectiveModel,
-            vendor === 'ccr'
-          )
+
+          // 📋 T022: Validate group ID format (should be non-empty UUID-like string)
+          if (!groupId || groupId.trim() === '') {
+            logger.error(
+              `❌ Invalid group binding for API key ${apiKeyData.name}: empty group ID after 'group:' prefix`
+            )
+            // Fall through to pool selection instead of failing
+          } else {
+            logger.info(
+              `🎯 API key ${apiKeyData.name} is bound to group ${groupId}, selecting from group`
+            )
+            return await this.selectAccountFromGroup(
+              groupId,
+              sessionHash,
+              effectiveModel,
+              vendor === 'ccr'
+            )
+          }
         }
 
         // 普通专属账户
@@ -364,46 +382,84 @@ class UnifiedClaudeScheduler {
     // 如果API Key绑定了专属账户，优先返回
     // 1. 检查Claude OAuth账户绑定
     if (apiKeyData.claudeAccountId) {
-      const boundAccount = await redis.getClaudeAccount(apiKeyData.claudeAccountId)
-      if (
-        boundAccount &&
-        boundAccount.isActive === 'true' &&
-        boundAccount.status !== 'error' &&
-        boundAccount.status !== 'blocked' &&
-        boundAccount.status !== 'temp_error'
-      ) {
-        const isRateLimited = await claudeAccountService.isAccountRateLimited(boundAccount.id)
-        if (isRateLimited) {
-          const rateInfo = await claudeAccountService.getAccountRateLimitInfo(boundAccount.id)
-          const error = new Error('Dedicated Claude account is rate limited')
-          error.code = 'CLAUDE_DEDICATED_RATE_LIMITED'
-          error.accountId = boundAccount.id
-          error.rateLimitEndAt = rateInfo?.rateLimitEndAt || boundAccount.rateLimitEndAt || null
-          throw error
-        }
-
-        if (!this._isSchedulable(boundAccount.schedulable)) {
-          logger.warn(
-            `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not schedulable (schedulable: ${boundAccount?.schedulable})`
-          )
-        } else {
-          logger.info(
-            `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId})`
-          )
-          return [
-            {
-              ...boundAccount,
-              accountId: boundAccount.id,
-              accountType: 'claude-official',
-              priority: parseInt(boundAccount.priority) || 50,
-              lastUsedAt: boundAccount.lastUsedAt || '0'
-            }
-          ]
-        }
-      } else {
-        logger.warn(
-          `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not available (isActive: ${boundAccount?.isActive}, status: ${boundAccount?.status})`
+      // 🔧 检查是否是分组绑定（group:前缀）- 分组账户由 selectAccountFromGroup() 处理
+      if (apiKeyData.claudeAccountId.startsWith('group:')) {
+        const groupId = apiKeyData.claudeAccountId.replace('group:', '')
+        logger.info(
+          `🎯 API key is bound to group ${groupId}, fetching group members for retry pool`
         )
+        // 获取分组成员作为可用账户池
+        const memberIds = await accountGroupService.getGroupMembers(groupId)
+        for (const memberId of memberIds) {
+          // 尝试获取 Console 账户
+          const consoleAccount = await claudeConsoleAccountService.getAccount(memberId)
+          if (
+            consoleAccount &&
+            consoleAccount.isActive === true &&
+            consoleAccount.status === 'active' &&
+            this._isSchedulable(consoleAccount.schedulable)
+          ) {
+            availableAccounts.push({
+              ...consoleAccount,
+              accountId: consoleAccount.id,
+              accountType: 'claude-console',
+              priority: parseInt(consoleAccount.priority) || 50,
+              lastUsedAt: consoleAccount.lastUsedAt || '0'
+            })
+          }
+        }
+        // 如果分组有可用账户，只返回分组账户（不混入共享池）
+        if (availableAccounts.length > 0) {
+          logger.info(
+            `📋 Found ${availableAccounts.length} available accounts in group for retry pool`
+          )
+          return this._sortAccountsByPriority(availableAccounts)
+        }
+        // 分组无可用账户，记录警告但继续检查其他绑定
+        logger.warn(`⚠️ Group ${groupId} has no available accounts, checking other bindings`)
+      } else {
+        // 普通 Claude OAuth 账户绑定
+        const boundAccount = await redis.getClaudeAccount(apiKeyData.claudeAccountId)
+        if (
+          boundAccount &&
+          boundAccount.isActive === 'true' &&
+          boundAccount.status !== 'error' &&
+          boundAccount.status !== 'blocked' &&
+          boundAccount.status !== 'temp_error'
+        ) {
+          const isRateLimited = await claudeAccountService.isAccountRateLimited(boundAccount.id)
+          if (isRateLimited) {
+            const rateInfo = await claudeAccountService.getAccountRateLimitInfo(boundAccount.id)
+            const error = new Error('Dedicated Claude account is rate limited')
+            error.code = 'CLAUDE_DEDICATED_RATE_LIMITED'
+            error.accountId = boundAccount.id
+            error.rateLimitEndAt = rateInfo?.rateLimitEndAt || boundAccount.rateLimitEndAt || null
+            throw error
+          }
+
+          if (!this._isSchedulable(boundAccount.schedulable)) {
+            logger.warn(
+              `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not schedulable (schedulable: ${boundAccount?.schedulable})`
+            )
+          } else {
+            logger.info(
+              `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId})`
+            )
+            return [
+              {
+                ...boundAccount,
+                accountId: boundAccount.id,
+                accountType: 'claude-official',
+                priority: parseInt(boundAccount.priority) || 50,
+                lastUsedAt: boundAccount.lastUsedAt || '0'
+              }
+            ]
+          }
+        } else {
+          logger.warn(
+            `⚠️ Bound Claude OAuth account ${apiKeyData.claudeAccountId} is not available (isActive: ${boundAccount?.isActive}, status: ${boundAccount?.status})`
+          )
+        }
       }
     }
 
@@ -1259,7 +1315,10 @@ class UnifiedClaudeScheduler {
       // 获取分组信息
       const group = await accountGroupService.getGroup(groupId)
       if (!group) {
-        throw new Error(`Group ${groupId} not found`)
+        const error = new Error(`Group ${groupId} not found`)
+        error.code = GROUP_SCHEDULING_ERRORS.GROUP_NOT_FOUND
+        error.groupId = groupId
+        throw error
       }
 
       logger.info(`👥 Selecting account from group: ${group.name} (${group.platform})`)
@@ -1273,6 +1332,9 @@ class UnifiedClaudeScheduler {
           if (memberIds.includes(mappedAccount.accountId)) {
             // 非 CCR 请求时不允许 CCR 粘性映射
             if (!allowCcr && mappedAccount.accountType === 'ccr') {
+              logger.info(
+                `🔄 Clearing CCR sticky session for non-CCR request: ${mappedAccount.accountId}`
+              )
               await this._deleteSessionMapping(sessionHash)
             } else {
               const isAvailable = await this._isAccountAvailable(
@@ -1287,8 +1349,17 @@ class UnifiedClaudeScheduler {
                   `🎯 Using sticky session account from group: ${mappedAccount.accountId} (${mappedAccount.accountType}) for session ${sessionHash}`
                 )
                 return mappedAccount
+              } else {
+                logger.info(
+                  `🔄 Sticky session account ${mappedAccount.accountId} no longer available, will reselect`
+                )
               }
             }
+          } else {
+            // 📋 T023: Log when sticky session points to account no longer in group
+            logger.warn(
+              `⚠️ Sticky session account ${mappedAccount.accountId} is no longer a member of group ${group.name}, clearing mapping`
+            )
           }
           // 如果映射的账户不可用或不在分组中，删除映射
           await this._deleteSessionMapping(sessionHash)
@@ -1298,10 +1369,19 @@ class UnifiedClaudeScheduler {
       // 获取分组内的所有账户
       const memberIds = await accountGroupService.getGroupMembers(groupId)
       if (memberIds.length === 0) {
-        throw new Error(`Group ${group.name} has no members`)
+        const error = new Error(`Group ${group.name} has no members`)
+        error.code = GROUP_SCHEDULING_ERRORS.GROUP_EMPTY
+        error.groupId = groupId
+        error.groupName = group.name
+        throw error
       }
 
+      logger.info(
+        `📋 Group ${group.name} has ${memberIds.length} members: [${memberIds.join(', ')}]`
+      )
+
       const availableAccounts = []
+      const skippedReasons = [] // Track why accounts were skipped
       const isOpusRequest =
         requestedModel && typeof requestedModel === 'string'
           ? requestedModel.toLowerCase().includes('opus')
@@ -1340,9 +1420,17 @@ class UnifiedClaudeScheduler {
         }
 
         if (!account) {
-          logger.warn(`⚠️ Account ${memberId} not found in group ${group.name}`)
+          logger.warn(
+            `⚠️ Account ${memberId} not found in group ${group.name} (checked: claude-official, claude-console${allowCcr ? ', ccr' : ''})`
+          )
+          skippedReasons.push({ memberId, reason: 'account_not_found' })
           continue
         }
+
+        // 📋 Log member check details for diagnostics
+        logger.info(
+          `📋 Checking group member: ${account.name || memberId} (${memberId}) type=${accountType}`
+        )
 
         // 检查账户是否可用
         const isActive =
@@ -1350,22 +1438,47 @@ class UnifiedClaudeScheduler {
             ? account.isActive === 'true'
             : account.isActive === true
 
-        const status =
+        const statusOk =
           accountType === 'claude-official'
             ? account.status !== 'error' && account.status !== 'blocked'
             : accountType === 'ccr'
               ? account.status === 'active'
               : account.status === 'active'
 
-        if (isActive && status && this._isSchedulable(account.schedulable)) {
+        const isSchedulable = this._isSchedulable(account.schedulable)
+
+        // 📋 Log availability check results
+        logger.info(
+          `   └─ isActive=${isActive} (raw: ${account.isActive}), status=${account.status} (ok=${statusOk}), schedulable=${isSchedulable} (raw: ${account.schedulable})`
+        )
+
+        if (!isActive || !statusOk || !isSchedulable) {
+          const reason = !isActive
+            ? 'inactive'
+            : !statusOk
+              ? `bad_status:${account.status}`
+              : 'not_schedulable'
+          logger.info(`   └─ ⚠️ Skipped: ${reason}`)
+          skippedReasons.push({ memberId, accountName: account.name, reason })
+          continue
+        }
+
+        if (isActive && statusOk && isSchedulable) {
           // 检查模型支持
           if (!this._isModelSupportedByAccount(account, accountType, requestedModel, 'in group')) {
+            skippedReasons.push({
+              memberId,
+              accountName: account.name,
+              reason: `model_not_supported:${requestedModel}`
+            })
             continue
           }
 
           // 检查是否被限流
           const isRateLimited = await this.isAccountRateLimited(account.id, accountType)
           if (isRateLimited) {
+            logger.info(`   └─ ⚠️ Skipped: rate_limited`)
+            skippedReasons.push({ memberId, accountName: account.name, reason: 'rate_limited' })
             continue
           }
 
@@ -1377,6 +1490,11 @@ class UnifiedClaudeScheduler {
               logger.info(
                 `🚫 Skipping group member ${account.name} (${account.id}) due to active Opus limit`
               )
+              skippedReasons.push({
+                memberId,
+                accountName: account.name,
+                reason: 'opus_rate_limited'
+              })
               continue
             }
           }
@@ -1388,10 +1506,16 @@ class UnifiedClaudeScheduler {
               logger.info(
                 `🚫 Skipping group member ${account.name} (${account.id}) due to concurrency limit: ${currentConcurrency}/${account.maxConcurrentTasks}`
               )
+              skippedReasons.push({
+                memberId,
+                accountName: account.name,
+                reason: `concurrency_limit:${currentConcurrency}/${account.maxConcurrentTasks}`
+              })
               continue
             }
           }
 
+          logger.info(`   └─ ✅ Available`)
           availableAccounts.push({
             ...account,
             accountId: account.id,
@@ -1402,8 +1526,38 @@ class UnifiedClaudeScheduler {
         }
       }
 
+      // 📊 Log summary of member iteration
+      logger.info(
+        `📊 Group ${group.name} selection summary: ${memberIds.length} members checked, ${availableAccounts.length} available, ${skippedReasons.length} skipped`
+      )
+
       if (availableAccounts.length === 0) {
-        throw new Error(`No available accounts in group ${group.name}`)
+        // Determine if all were rate limited (special error code)
+        const allRateLimited =
+          skippedReasons.length > 0 &&
+          skippedReasons.every(
+            (r) =>
+              r.reason === 'rate_limited' ||
+              r.reason === 'opus_rate_limited' ||
+              r.reason.startsWith('concurrency_limit')
+          )
+
+        const reasonSummary = skippedReasons
+          .map((r) => `${r.accountName || r.memberId}: ${r.reason}`)
+          .join('; ')
+        logger.warn(
+          `❌ No available accounts in group ${group.name}. Skip reasons: [${reasonSummary}]`
+        )
+
+        const error = new Error(`No available accounts in group ${group.name}`)
+        error.code = allRateLimited
+          ? GROUP_SCHEDULING_ERRORS.GROUP_DEDICATED_RATE_LIMITED
+          : GROUP_SCHEDULING_ERRORS.NO_AVAILABLE_ACCOUNTS_IN_GROUP
+        error.groupId = groupId
+        error.groupName = group.name
+        error.membersChecked = memberIds.length
+        error.skippedReasons = skippedReasons
+        throw error
       }
 
       // 使用现有的优先级排序逻辑
@@ -1574,4 +1728,8 @@ class UnifiedClaudeScheduler {
   }
 }
 
-module.exports = new UnifiedClaudeScheduler()
+const unifiedClaudeScheduler = new UnifiedClaudeScheduler()
+
+// Export both the instance and the error codes
+module.exports = unifiedClaudeScheduler
+module.exports.GROUP_SCHEDULING_ERRORS = GROUP_SCHEDULING_ERRORS
