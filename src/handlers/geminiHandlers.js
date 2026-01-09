@@ -953,7 +953,7 @@ async function handleKeyInfo(req, res) {
     res.json({
       id: keyData.id,
       name: keyData.name,
-      permissions: keyData.permissions || 'all',
+      permissions: keyData.permissions,
       token_limit: keyData.tokenLimit,
       tokens_used: keyData.usage.total.tokens,
       tokens_remaining:
