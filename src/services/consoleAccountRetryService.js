@@ -3,7 +3,7 @@ const { calculateBackoffDelay, sleep } = require('../utils/retryHelper')
 const AllRetriesFailed = require('../errors/AllRetriesFailed')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const claudeConsoleRelayService = require('./claudeConsoleRelayService')
-const webhookNotifier = require('../utils/webhookNotifier')
+const requestFailureAlertService = require('./requestFailureAlertService')
 
 /**
  * Claude Console 账户的多轮重试服务
@@ -31,19 +31,20 @@ class ConsoleAccountRetryService {
     const { maxRetries = 1, baseDelay = 2000, maxDelay = 120000, usageCallback = null } = options
 
     try {
-      // 定义失败回调：发送webhook告警
-      const onFailure = async (account, error, retryRound, totalRetries) => {
+      // 定义失败回调：发送webhook告警（经过节流服务）
+      const onFailure = async (account, error, retryRound, maxRetries) => {
         try {
-          await webhookNotifier.sendRequestFailureAlert({
+          await requestFailureAlertService.sendAlert({
             apiKeyId,
             apiKeyName,
             accountId: account?.accountId,
             accountName: account?.name,
+            accountType: 'claude-console',
             errorCode: error.errorCode,
             statusCode: error.statusCode,
             errorMessage: error.message,
             retryRound: retryRound + 1,
-            maxRetries: totalRetries
+            maxRetries
           })
         } catch (alertError) {
           logger.error('Failed to send failure alert:', alertError)
@@ -191,11 +192,12 @@ class ConsoleAccountRetryService {
 
         // 发送最终告警
         try {
-          await webhookNotifier.sendRequestFailureAlert({
+          await requestFailureAlertService.sendAlert({
             apiKeyId,
             apiKeyName,
             accountId: error.accountId,
             accountName: error.accountName,
+            accountType: 'claude-console',
             errorCode: error.errorCode || 'ALL_RETRIES_FAILED',
             statusCode: error.statusCode || 503,
             errorMessage: error.originalMessage || error.message,
@@ -222,9 +224,10 @@ class ConsoleAccountRetryService {
       logger.error('Unexpected error in Console account retry:', error)
 
       try {
-        await webhookNotifier.sendRequestFailureAlert({
+        await requestFailureAlertService.sendAlert({
           apiKeyId,
           apiKeyName,
+          accountType: 'claude-console',
           errorCode: 'INTERNAL_ERROR',
           statusCode: 500,
           errorMessage: error.message

@@ -28,6 +28,9 @@ class RequestFailureAlertService {
    * @param {string} options.errorCode - Error code
    * @param {number} [options.statusCode] - HTTP status code
    * @param {string} options.errorMessage - Error message
+   * @param {number} [options.retryRound] - Current retry round (optional)
+   * @param {number} [options.maxRetries] - Max retry rounds (optional)
+   * @param {boolean} [options.isFinal] - Whether this is the final failure (optional)
    * @returns {Promise<boolean>} True if alert was sent, false if rate limited
    */
   async sendAlert(options) {
@@ -45,7 +48,10 @@ class RequestFailureAlertService {
       accountType,
       errorCode,
       statusCode,
-      errorMessage
+      errorMessage,
+      retryRound,
+      maxRetries,
+      isFinal
     } = options
 
     // Skip if no API key info (shouldn't happen but be safe)
@@ -78,7 +84,10 @@ class RequestFailureAlertService {
         accountType,
         errorCode,
         statusCode,
-        errorMessage
+        errorMessage,
+        retryRound,
+        maxRetries,
+        isFinal
       })
       return true
     } catch (error) {
