@@ -32,7 +32,7 @@ class ConsoleAccountRetryService {
 
     try {
       // 定义失败回调：发送webhook告警（经过节流服务）
-      const onFailure = async (account, error, retryRound, maxRetries) => {
+      const onFailure = async (account, error, retryRound, totalRetries) => {
         try {
           await requestFailureAlertService.sendAlert({
             apiKeyId,
@@ -44,7 +44,7 @@ class ConsoleAccountRetryService {
             statusCode: error.statusCode,
             errorMessage: error.message,
             retryRound: retryRound + 1,
-            maxRetries
+            maxRetries: totalRetries
           })
         } catch (alertError) {
           logger.error('Failed to send failure alert:', alertError)
@@ -118,6 +118,20 @@ class ConsoleAccountRetryService {
               // 检查响应状态
               if (result.status === 200 || result.status === 201) {
                 logger.info(`✅ Console request succeeded with account ${account.name}`)
+
+                // 记录非流式请求的 usage 统计
+                if (result.data?.usage && usageCallback) {
+                  try {
+                    const usageData = {
+                      ...result.data.usage,
+                      accountId: account.accountId
+                    }
+                    usageCallback(usageData)
+                  } catch (callbackError) {
+                    logger.error('❌ Failed to execute usage callback:', callbackError)
+                  }
+                }
+
                 // 返回成功响应
                 res.status(result.status).json(result.data)
                 return true

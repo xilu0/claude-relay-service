@@ -571,7 +571,63 @@ async function handleMessagesRequest(req, res) {
           req,
           res,
           req.apiKey,
-          false /* isStream */
+          false /* isStream */,
+          {
+            usageCallback: (usageData) => {
+              // 回调函数：记录非流式请求的 usage 统计
+              logger.info(
+                '🎯 [Console] Non-stream usage callback triggered:',
+                JSON.stringify(usageData, null, 2)
+              )
+
+              if (
+                usageData &&
+                usageData.input_tokens !== undefined &&
+                usageData.output_tokens !== undefined
+              ) {
+                const {
+                  inputTokens,
+                  outputTokens,
+                  cacheCreateTokens,
+                  cacheReadTokens,
+                  model,
+                  usageObject,
+                  totalTokens
+                } = normalizeUsageData(usageData, req.body.model)
+                const { accountId: usageAccountId } = usageData
+
+                apiKeyService
+                  .recordUsageWithDetails(
+                    req.apiKey.id,
+                    usageObject,
+                    model,
+                    usageAccountId,
+                    'claude-console',
+                    req.apiKey.useBooster
+                  )
+                  .catch((error) => {
+                    logger.error('❌ Failed to record Console non-stream usage:', error)
+                  })
+
+                queueRateLimitUpdate(
+                  req.rateLimitInfo,
+                  { inputTokens, outputTokens, cacheCreateTokens, cacheReadTokens },
+                  model,
+                  'claude-console-non-stream',
+                  req.apiKey.useBooster
+                )
+
+                logger.api(
+                  `📊 Console non-stream usage recorded - Model: ${model}, Input: ${inputTokens}, Output: ${outputTokens}, Cache Create: ${cacheCreateTokens}, Cache Read: ${cacheReadTokens}, Total: ${totalTokens} tokens`
+                )
+              } else {
+                logger.warn(
+                  '⚠️ [Console] Non-stream usage callback triggered but data is incomplete:',
+                  JSON.stringify(usageData)
+                )
+              }
+            }
+          }
         )
         if (handled) {
           // 重试服务已处理响应（成功或503失败）
