@@ -1,9 +1,13 @@
 name: Build and Push Docker Image
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Unit Tests"]
+    types:
+      - completed
     branches:
       - dave
+  push:
     tags:
       - 'v*'
   workflow_dispatch:
@@ -15,6 +19,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout code
