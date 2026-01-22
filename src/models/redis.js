@@ -1081,8 +1081,13 @@ class RedisClient {
   // 💰 获取本周 Opus 费用
   async getWeeklyOpusCost(keyId) {
     const currentWeek = getWeekStringInTimezone()
-    const costKey = `usage:opus:weekly:${keyId}:${currentWeek}`
-    const cost = await this.client.get(costKey)
+    const costKey = `usage:claude:weekly:${keyId}:${currentWeek}`
+    let cost = await this.client.get(costKey)
+    // 向后兼容：如果新 key 不存在，则回退读取旧的（仅 Opus 口径）周费用 key。
+    if (cost === null || cost === undefined) {
+      const legacyKey = `usage:opus:weekly:${keyId}:${currentWeek}`
+      cost = await this.client.get(legacyKey)
+    }
     const result = parseFloat(cost || 0)
     logger.debug(
       `💰 Getting weekly Opus cost for ${keyId}, week: ${currentWeek}, key: ${costKey}, value: ${cost}, result: ${result}`
@@ -1090,11 +1095,12 @@ class RedisClient {
     return result
   }
 
-  // 💰 增加本周 Opus 费用
+  // 💰 增加本周 Claude 费用
   async incrementWeeklyOpusCost(keyId, amount) {
     const currentWeek = getWeekStringInTimezone()
-    const weeklyKey = `usage:opus:weekly:${keyId}:${currentWeek}`
-    const totalKey = `usage:opus:total:${keyId}`
+    // 注意：尽管函数名沿用旧的 Opus 命名，但当前实现统计的是 Claude 系列模型的“周费用”。
+    const weeklyKey = `usage:claude:weekly:${keyId}:${currentWeek}`
+    const totalKey = `usage:claude:total:${keyId}`
 
     logger.debug(
       `💰 Incrementing weekly Opus cost for ${keyId}, week: ${currentWeek}, amount: $${amount}`
@@ -1109,6 +1115,16 @@ class RedisClient {
 
     const results = await pipeline.exec()
     logger.debug(`💰 Opus cost incremented successfully, new weekly total: $${results[0][1]}`)
+  }
+
+  // 💰 覆盖设置本周 Claude 费用（用于启动回填/迁移）
+  async setWeeklyClaudeCost(keyId, amount, weekString = null) {
+    const currentWeek = weekString || getWeekStringInTimezone()
+    const weeklyKey = `usage:claude:weekly:${keyId}:${currentWeek}`
+
+    await this.client.set(weeklyKey, String(amount || 0))
+    // 保留 2 周，足够覆盖“当前周 + 上周”查看/回填
+    await this.client.expire(weeklyKey, 14 * 24 * 3600)
   }
 
   // 💰 计算账户的每日费用（基于模型使用）
@@ -1518,6 +1534,123 @@ class RedisClient {
 
   async deleteOAuthSession(sessionId) {
     const key = `oauth:${sessionId}`
+    return await this.client.del(key)
+  }
+
+  // 💰 账户余额缓存（API 查询结果）
+  async setAccountBalance(platform, accountId, balanceData, ttl = 3600) {
+    const key = `account_balance:${platform}:${accountId}`
+
+    const payload = {
+      balance:
+        balanceData && balanceData.balance !== null && balanceData.balance !== undefined
+          ? String(balanceData.balance)
+          : '',
+      currency: balanceData?.currency || 'USD',
+      lastRefreshAt: balanceData?.lastRefreshAt || new Date().toISOString(),
+      queryMethod: balanceData?.queryMethod || 'api',
+      status: balanceData?.status || 'success',
+      errorMessage: balanceData?.errorMessage || balanceData?.error || '',
+      rawData: balanceData?.rawData ? JSON.stringify(balanceData.rawData) : '',
+      quota: balanceData?.quota ? JSON.stringify(balanceData.quota) : ''
+    }
+
+    await this.client.hset(key, payload)
+    await this.client.expire(key, ttl)
+  }
+
+  async getAccountBalance(platform, accountId) {
+    const key = `account_balance:${platform}:${accountId}`
+    const [data, ttlSeconds] = await Promise.all([this.client.hgetall(key), this.client.ttl(key)])
+
+    if (!data || Object.keys(data).length === 0) {
+      return null
+    }
+
+    let rawData = null
+    if (data.rawData) {
+      try {
+        rawData = JSON.parse(data.rawData)
+      } catch (error) {
+        rawData = null
+      }
+    }
+
+    let quota = null
+    if (data.quota) {
+      try {
+        quota = JSON.parse(data.quota)
+      } catch (error) {
+        quota = null
+      }
+    }
+
+    return {
+      balance: data.balance ? parseFloat(data.balance) : null,
+      currency: data.currency || 'USD',
+      lastRefreshAt: data.lastRefreshAt || null,
+      queryMethod: data.queryMethod || null,
+      status: data.status || null,
+      errorMessage: data.errorMessage || '',
+      rawData,
+      quota,
+      ttlSeconds: Number.isFinite(ttlSeconds) ? ttlSeconds : null
+    }
+  }
+
+  // 📊 账户余额缓存（本地统计）
+  async setLocalBalance(platform, accountId, statisticsData, ttl = 300) {
+    const key = `account_balance_local:${platform}:${accountId}`
+
+    await this.client.hset(key, {
+      estimatedBalance: JSON.stringify(statisticsData || {}),
+      lastCalculated: new Date().toISOString()
+    })
+    await this.client.expire(key, ttl)
+  }
+
+  async getLocalBalance(platform, accountId) {
+    const key = `account_balance_local:${platform}:${accountId}`
+    const data = await this.client.hgetall(key)
+
+    if (!data || !data.estimatedBalance) {
+      return null
+    }
+
+    try {
+      return JSON.parse(data.estimatedBalance)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async deleteAccountBalance(platform, accountId) {
+    const key = `account_balance:${platform}:${accountId}`
+    const localKey = `account_balance_local:${platform}:${accountId}`
+    await this.client.del(key, localKey)
+  }
+
+  // 🧩 账户余额脚本配置
+  async setBalanceScriptConfig(platform, accountId, scriptConfig) {
+    const key = `account_balance_script:${platform}:${accountId}`
+    await this.client.set(key, JSON.stringify(scriptConfig || {}))
+  }
+
+  async getBalanceScriptConfig(platform, accountId) {
+    const key = `account_balance_script:${platform}:${accountId}`
+    const raw = await this.client.get(key)
+    if (!raw) {
+      return null
+    }
+    try {
+      return JSON.parse(raw)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async deleteBalanceScriptConfig(platform, accountId) {
+    const key = `account_balance_script:${platform}:${accountId}`
     return await this.client.del(key)
   }
 

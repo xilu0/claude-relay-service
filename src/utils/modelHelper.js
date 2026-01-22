@@ -5,6 +5,10 @@
  * Supports parsing model strings like "ccr,model_name" to extract vendor type and base model.
  */
 
+// 仅保留原仓库既有的模型前缀：CCR 路由
+// Gemini/Antigravity 采用“路径分流”，避免在 model 字段里混入 vendor 前缀造成混乱
+const SUPPORTED_VENDOR_PREFIXES = ['ccr']
+
 /**
  * Parse vendor-prefixed model string
  * @param {string} modelStr - Model string, potentially with vendor prefix (e.g., "ccr,gemini-2.5-pro")
@@ -19,16 +23,21 @@ function parseVendorPrefixedModel(modelStr) {
   const trimmed = modelStr.trim()
   const lowerTrimmed = trimmed.toLowerCase()
 
-  // Check for ccr prefix (case insensitive)
-  if (lowerTrimmed.startsWith('ccr,')) {
+  for (const vendorPrefix of SUPPORTED_VENDOR_PREFIXES) {
+    if (!lowerTrimmed.startsWith(`${vendorPrefix},`)) {
+      continue
+    }
+
     const parts = trimmed.split(',')
-    if (parts.length >= 2) {
-      // Extract base model (everything after the first comma, rejoined in case model name contains commas)
-      const baseModel = parts.slice(1).join(',').trim()
-      return {
-        vendor: 'ccr',
-        baseModel
-      }
+    if (parts.length < 2) {
+      break
+    }
+
+    // Extract base model (everything after the first comma, rejoined in case model name contains commas)
+    const baseModel = parts.slice(1).join(',').trim()
+    return {
+      vendor: vendorPrefix,
+      baseModel
     }
   }
 
@@ -179,10 +188,54 @@ function isOpus45OrNewer(modelName) {
   return false
 }
 
+/**
+ * 判断某个 model 名称是否属于 Anthropic Claude 系列模型。
+ *
+ * 用于 API Key 维度的限额/统计（Claude 周费用）。这里刻意覆盖以下命名：
+ * - 标准 Anthropic 模型：claude-*，包括 claude-3-opus、claude-sonnet-*、claude-haiku-* 等
+ * - Bedrock 模型：{region}.anthropic.claude-... / anthropic.claude-...
+ * - 少数情况下 model 字段可能只包含家族关键词（sonnet/haiku/opus），也视为 Claude 系列
+ *
+ * 注意：会先去掉支持的 vendor 前缀（例如 "ccr,"）。
+ */
+function isClaudeFamilyModel(modelName) {
+  if (!modelName || typeof modelName !== 'string') {
+    return false
+  }
+
+  const { baseModel } = parseVendorPrefixedModel(modelName)
+  const m = (baseModel || '').trim().toLowerCase()
+  if (!m) {
+    return false
+  }
+
+  // Bedrock 模型格式
+  if (
+    m.includes('.anthropic.claude-') ||
+    m.startsWith('anthropic.claude-') ||
+    m.includes('.claude-')
+  ) {
+    return true
+  }
+
+  // 标准 Anthropic 模型 ID
+  if (m.startsWith('claude-') || m.includes('claude-')) {
+    return true
+  }
+
+  // 兜底：某些下游链路里 model 字段可能不带 "claude-" 前缀，但仍包含家族关键词。
+  if (m.includes('opus') || m.includes('sonnet') || m.includes('haiku')) {
+    return true
+  }
+
+  return false
+}
+
 module.exports = {
   parseVendorPrefixedModel,
   hasVendorPrefix,
   getEffectiveModel,
   getVendorType,
-  isOpus45OrNewer
+  isOpus45OrNewer,
+  isClaudeFamilyModel
 }

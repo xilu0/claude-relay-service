@@ -9,6 +9,7 @@ const ClientValidator = require('../validators/clientValidator')
 const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 const claudeRelayConfigService = require('../services/claudeRelayConfigService')
 const { calculateWaitTimeStats } = require('../utils/statsHelper')
+const { isClaudeFamilyModel } = require('../utils/modelHelper')
 
 // 工具函数
 function sleep(ms) {
@@ -1239,20 +1240,20 @@ const authenticateApiKey = async (req, res, next) => {
       )
     }
 
-    // 检查 Opus 周费用限制（仅对 Opus 模型生效）
+    // 检查 Claude 周费用限制
     const weeklyOpusCostLimit = validation.keyData.weeklyOpusCostLimit || 0
     if (weeklyOpusCostLimit > 0) {
       // 从请求中获取模型信息
       const requestBody = req.body || {}
       const model = requestBody.model || ''
 
-      // 判断是否为 Opus 模型
-      if (model && model.toLowerCase().includes('claude-opus')) {
+      // 判断是否为 Claude 模型
+      if (isClaudeFamilyModel(model)) {
         const weeklyOpusCost = validation.keyData.weeklyOpusCost || 0
 
         if (weeklyOpusCost >= weeklyOpusCostLimit) {
           logger.security(
-            `💰 Weekly Opus cost limit exceeded for key: ${validation.keyData.id} (${
+            `💰 Weekly Claude cost limit exceeded for key: ${validation.keyData.id} (${
               validation.keyData.name
             }), cost: $${weeklyOpusCost.toFixed(2)}/$${weeklyOpusCostLimit}`
           )
@@ -1266,17 +1267,17 @@ const authenticateApiKey = async (req, res, next) => {
           resetDate.setHours(0, 0, 0, 0)
 
           return res.status(429).json({
-            error: 'Weekly Opus cost limit exceeded',
-            message: `已达到 Opus 模型周费用限制 ($${weeklyOpusCostLimit})`,
+            error: 'Weekly Claude cost limit exceeded',
+            message: `已达到 Claude 模型周费用限制 ($${weeklyOpusCostLimit})`,
             currentCost: weeklyOpusCost,
             costLimit: weeklyOpusCostLimit,
             resetAt: resetDate.toISOString() // 下周一重置
           })
         }
 
-        // 记录当前 Opus 费用使用情况
+        // 记录当前 Claude 费用使用情况
         logger.api(
-          `💰 Opus weekly cost usage for key: ${validation.keyData.id} (${
+          `💰 Claude weekly cost usage for key: ${validation.keyData.id} (${
             validation.keyData.name
           }), current: $${weeklyOpusCost.toFixed(2)}/$${weeklyOpusCostLimit}`
         )
@@ -2050,7 +2051,7 @@ const globalRateLimit = async (req, res, next) =>
 
 // 📊 请求大小限制中间件
 const requestSizeLimit = (req, res, next) => {
-  const MAX_SIZE_MB = parseInt(process.env.REQUEST_MAX_SIZE_MB || '60', 10)
+  const MAX_SIZE_MB = parseInt(process.env.REQUEST_MAX_SIZE_MB || '100', 10)
   const maxSize = MAX_SIZE_MB * 1024 * 1024
   const contentLength = parseInt(req.headers['content-length'] || '0')
 
@@ -2059,7 +2060,7 @@ const requestSizeLimit = (req, res, next) => {
     return res.status(413).json({
       error: 'Payload Too Large',
       message: 'Request body size exceeds limit',
-      limit: '10MB'
+      limit: `${MAX_SIZE_MB}MB`
     })
   }
 

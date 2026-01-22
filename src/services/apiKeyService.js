@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid')
 const config = require('../../config/config')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
+const { isClaudeFamilyModel } = require('../utils/modelHelper')
 
 const ACCOUNT_TYPE_CONFIG = {
   claude: { prefix: 'claude:account:' },
@@ -35,6 +36,58 @@ const ACCOUNT_CATEGORY_MAP = {
   gemini: 'gemini',
   'gemini-api': 'gemini',
   droid: 'droid'
+}
+
+/**
+ * 规范化权限数据，兼容旧格式（字符串）和新格式（数组）
+ * @param {string|array} permissions - 权限数据
+ * @returns {array} - 权限数组，空数组表示全部服务
+ */
+function normalizePermissions(permissions) {
+  if (!permissions) {
+    return [] // 空 = 全部服务
+  }
+  if (Array.isArray(permissions)) {
+    return permissions
+  }
+  // 尝试解析 JSON 字符串（新格式存储）
+  if (typeof permissions === 'string') {
+    if (permissions.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(permissions)
+        if (Array.isArray(parsed)) {
+          return parsed
+        }
+      } catch (e) {
+        // 解析失败，继续处理为普通字符串
+      }
+    }
+    // 旧格式 'all' 转为空数组
+    if (permissions === 'all') {
+      return []
+    }
+    // 兼容逗号分隔格式（修复历史错误数据，如 "claude,openai"）
+    if (permissions.includes(',')) {
+      return permissions
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)
+    }
+    // 旧单个字符串转为数组
+    return [permissions]
+  }
+  return []
+}
+
+/**
+ * 检查是否有访问特定服务的权限
+ * @param {string|array} permissions - 权限数据
+ * @param {string} service - 服务名称（claude/gemini/openai/droid）
+ * @returns {boolean} - 是否有权限
+ */
+function hasPermission(permissions, service) {
+  const perms = normalizePermissions(permissions)
+  return perms.length === 0 || perms.includes(service) // 空数组 = 全部服务
 }
 
 function normalizeAccountTypeKey(type) {
@@ -89,7 +142,7 @@ class ApiKeyService {
       azureOpenaiAccountId = null,
       bedrockAccountId = null, // 添加 Bedrock 账号ID支持
       droidAccountId = null,
-      permissions = 'all', // 可选值：'claude'、'gemini'、'openai'、'droid' 或 'all'
+      permissions = [], // 数组格式，空数组表示全部服务，如 ['claude', 'gemini']
       isActive = true,
       concurrencyLimit = 0,
       rateLimitWindow = null,
@@ -132,7 +185,7 @@ class ApiKeyService {
       azureOpenaiAccountId: azureOpenaiAccountId || '',
       bedrockAccountId: bedrockAccountId || '', // 添加 Bedrock 账号ID
       droidAccountId: droidAccountId || '',
-      permissions: permissions || 'all',
+      permissions: JSON.stringify(normalizePermissions(permissions)),
       enableModelRestriction: String(enableModelRestriction),
       restrictedModels: JSON.stringify(restrictedModels || []),
       enableClientRestriction: String(enableClientRestriction || false),
@@ -186,7 +239,7 @@ class ApiKeyService {
       azureOpenaiAccountId: keyData.azureOpenaiAccountId,
       bedrockAccountId: keyData.bedrockAccountId, // 添加 Bedrock 账号ID
       droidAccountId: keyData.droidAccountId,
-      permissions: keyData.permissions,
+      permissions: normalizePermissions(keyData.permissions),
       enableModelRestriction: keyData.enableModelRestriction === 'true',
       restrictedModels: JSON.parse(keyData.restrictedModels),
       enableClientRestriction: keyData.enableClientRestriction === 'true',
@@ -338,7 +391,7 @@ class ApiKeyService {
           azureOpenaiAccountId: keyData.azureOpenaiAccountId,
           bedrockAccountId: keyData.bedrockAccountId, // 添加 Bedrock 账号ID
           droidAccountId: keyData.droidAccountId,
-          permissions: keyData.permissions || 'all',
+          permissions: normalizePermissions(keyData.permissions),
           tokenLimit: parseInt(keyData.tokenLimit),
           concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
@@ -467,7 +520,7 @@ class ApiKeyService {
           azureOpenaiAccountId: keyData.azureOpenaiAccountId,
           bedrockAccountId: keyData.bedrockAccountId,
           droidAccountId: keyData.droidAccountId,
-          permissions: keyData.permissions || 'all',
+          permissions: normalizePermissions(keyData.permissions),
           tokenLimit: parseInt(keyData.tokenLimit),
           concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
@@ -525,7 +578,7 @@ class ApiKeyService {
         key.isActive = key.isActive === 'true'
         key.enableModelRestriction = key.enableModelRestriction === 'true'
         key.enableClientRestriction = key.enableClientRestriction === 'true'
-        key.permissions = key.permissions || 'all' // 兼容旧数据
+        key.permissions = normalizePermissions(key.permissions)
         key.dailyCostLimit = parseFloat(key.dailyCostLimit || 0)
         key.totalCostLimit = parseFloat(key.totalCostLimit || 0)
         key.weeklyOpusCostLimit = parseFloat(key.weeklyOpusCostLimit || 0)
@@ -708,6 +761,9 @@ class ApiKeyService {
           if (field === 'restrictedModels' || field === 'allowedClients' || field === 'tags') {
             // 特殊处理数组字段
             updatedData[field] = JSON.stringify(value || [])
+          } else if (field === 'permissions') {
+            // 权限字段：规范化后JSON序列化，与createApiKey保持一致
+            updatedData[field] = JSON.stringify(normalizePermissions(value))
           } else if (
             field === 'enableModelRestriction' ||
             field === 'enableClientRestriction' ||
@@ -974,6 +1030,9 @@ class ApiKeyService {
         logger.database(
           `💰 Recorded cost for ${keyId}: $${costInfo.costs.total.toFixed(6)}, model: ${model}`
         )
+
+        // 记录 Claude 周费用（如果适用）
+        await this.recordClaudeWeeklyCost(keyId, costInfo.costs.total, model, null)
       } else {
         logger.debug(`💰 No cost recorded for ${keyId} - zero cost for model: ${model}`)
       }
@@ -1037,33 +1096,29 @@ class ApiKeyService {
     }
   }
 
-  // 📊 记录 Opus 模型费用（仅限 claude 和 claude-console 账户）
-  async recordOpusCost(keyId, cost, model, accountType) {
+  // 📊 记录 Claude 模型周费用（API Key 维度）
+  async recordClaudeWeeklyCost(keyId, cost, model, accountType) {
     try {
-      // 判断是否为 Opus 模型
-      if (!model || !model.toLowerCase().includes('claude-opus')) {
-        return // 不是 Opus 模型，直接返回
+      // 判断是否为 Claude 系列模型（包含 Bedrock 格式等）
+      if (!isClaudeFamilyModel(model)) {
+        return
       }
 
-      // 判断是否为 claude、claude-console 或 ccr 账户
-      if (
-        !accountType ||
-        (accountType !== 'claude' && accountType !== 'claude-console' && accountType !== 'ccr')
-      ) {
-        logger.debug(`⚠️ Skipping Opus cost recording for non-Claude account type: ${accountType}`)
-        return // 不是 claude 账户，直接返回
-      }
-
-      // 记录 Opus 周费用
+      // 记录 Claude 周费用
       await redis.incrementWeeklyOpusCost(keyId, cost)
       logger.database(
-        `💰 Recorded Opus weekly cost for ${keyId}: $${cost.toFixed(
+        `💰 Recorded Claude weekly cost for ${keyId}: $${cost.toFixed(
           6
-        )}, model: ${model}, account type: ${accountType}`
+        )}, model: ${model}${accountType ? `, account type: ${accountType}` : ''}`
       )
     } catch (error) {
-      logger.error('❌ Failed to record Opus cost:', error)
+      logger.error('❌ Failed to record Claude weekly cost:', error)
     }
+  }
+
+  // 向后兼容：旧名字是 Opus-only 口径；现在周费用统计已扩展为 Claude 全模型口径。
+  async recordOpusCost(keyId, cost, model, accountType) {
+    return this.recordClaudeWeeklyCost(keyId, cost, model, accountType)
   }
 
   // 📊 记录使用情况（新版本，支持详细的缓存类型）
@@ -1165,8 +1220,8 @@ class ApiKeyService {
           `💰 Recorded cost for ${keyId}: $${costInfo.totalCost.toFixed(6)}, model: ${model}`
         )
 
-        // 记录 Opus 周费用（如果适用）
-        await this.recordOpusCost(keyId, costInfo.totalCost, model, accountType)
+        // 记录 Claude 周费用（如果适用）
+        await this.recordClaudeWeeklyCost(keyId, costInfo.totalCost, model, accountType)
 
         // 记录详细的缓存费用（如果有）
         if (costInfo.ephemeral5mCost > 0 || costInfo.ephemeral1hCost > 0) {
@@ -1568,7 +1623,7 @@ class ApiKeyService {
         userId: keyData.userId,
         userUsername: keyData.userUsername,
         createdBy: keyData.createdBy,
-        permissions: keyData.permissions,
+        permissions: normalizePermissions(keyData.permissions),
         dailyCostLimit: parseFloat(keyData.dailyCostLimit || 0),
         totalCostLimit: parseFloat(keyData.totalCostLimit || 0),
         // 所有平台账户绑定字段
@@ -1819,5 +1874,9 @@ const apiKeyService = new ApiKeyService()
 
 // 为了方便其他服务调用，导出 recordUsage 方法
 apiKeyService.recordUsageMetrics = apiKeyService.recordUsage.bind(apiKeyService)
+
+// 导出权限辅助函数供路由使用
+apiKeyService.hasPermission = hasPermission
+apiKeyService.normalizePermissions = normalizePermissions
 
 module.exports = apiKeyService
