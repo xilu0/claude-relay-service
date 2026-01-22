@@ -775,9 +775,7 @@
                   @refreshed="(data) => handleBalanceRefreshed(account.id, data)"
                 />
                 <button
-                  v-if="
-                    !(account.platform === 'gemini' && account.oauthProvider === 'antigravity')
-                  "
+                  v-if="!(account.platform === 'gemini' && account.oauthProvider === 'antigravity')"
                   class="mt-0.5 flex items-center gap-1 text-[10px] text-blue-500 hover:underline dark:text-blue-300"
                   title="配置余额查询脚本"
                   @click="openBalanceScriptModal(account)"
