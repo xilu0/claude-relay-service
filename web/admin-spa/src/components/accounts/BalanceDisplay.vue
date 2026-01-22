@@ -1,20 +1,13 @@
 <template>
-  <div class="min-w-[200px] space-y-1">
-    <div v-if="loading" class="flex items-center gap-2">
-      <i class="fas fa-spinner fa-spin text-gray-400 dark:text-gray-500"></i>
+  <div class="space-y-1">
+    <div v-if="loading" class="flex items-center gap-1">
+      <i class="fas fa-spinner fa-spin text-xs text-gray-400 dark:text-gray-500"></i>
       <span class="text-xs text-gray-500 dark:text-gray-400">加载中...</span>
     </div>
 
-    <div v-else-if="requestError" class="flex items-center gap-2">
-      <i class="fas fa-exclamation-circle text-red-500"></i>
+    <div v-else-if="requestError" class="flex items-center gap-1">
+      <i class="fas fa-exclamation-circle text-xs text-red-500"></i>
       <span class="text-xs text-red-600 dark:text-red-400">{{ requestError }}</span>
-      <button
-        class="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400"
-        :disabled="refreshing"
-        @click="reload"
-      >
-        重试
-      </button>
     </div>
 
     <div v-else-if="balanceData" class="space-y-1">
@@ -22,27 +15,24 @@
         {{ balanceData.error }}
       </div>
 
-      <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2">
-          <i
-            class="fas"
-            :class="
-              balanceData.balance
-                ? 'fa-wallet text-green-600 dark:text-green-400'
-                : 'fa-chart-line text-gray-500 dark:text-gray-400'
-            "
-          ></i>
-          <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            {{ primaryText }}
-          </span>
-          <span class="rounded px-1.5 py-0.5 text-xs" :class="sourceClass">
-            {{ sourceLabel }}
-          </span>
-        </div>
-
+      <div class="flex items-center gap-1.5">
+        <i
+          class="fas text-xs"
+          :class="
+            balanceData.balance
+              ? 'fa-wallet text-green-600 dark:text-green-400'
+              : 'fa-chart-line text-gray-500 dark:text-gray-400'
+          "
+        ></i>
+        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {{ primaryText }}
+        </span>
+        <span class="rounded px-1 py-0.5 text-[10px]" :class="sourceClass">
+          {{ sourceLabel }}
+        </span>
         <button
           v-if="!hideRefresh"
-          class="text-xs text-gray-500 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:text-blue-400"
+          class="ml-auto text-xs text-gray-500 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:text-blue-400"
           :disabled="refreshing || !canRefresh"
           :title="refreshTitle"
           @click="refresh"
@@ -93,11 +83,7 @@
         </div>
       </div>
 
-      <div v-else-if="quotaInfo" class="space-y-1">
-        <div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-          <span>已用: {{ formatQuotaNumber(quotaInfo.used) }}</span>
-          <span>剩余: {{ formatQuotaNumber(quotaInfo.remaining) }}</span>
-        </div>
+      <div v-else-if="quotaInfo" class="space-y-0.5">
         <div class="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
           <div
             class="h-1.5 rounded-full transition-all"
@@ -105,30 +91,19 @@
             :style="{ width: `${Math.min(100, quotaInfo.percentage)}%` }"
           ></div>
         </div>
-        <div class="flex items-center justify-between text-xs">
-          <span class="text-gray-500 dark:text-gray-400">
-            {{ quotaInfo.percentage.toFixed(1) }}% 已使用
-          </span>
-          <span v-if="quotaInfo.resetAt" class="text-gray-400 dark:text-gray-500">
-            重置: {{ formatResetTime(quotaInfo.resetAt) }}
-          </span>
+        <div class="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400">
+          <span>{{ quotaInfo.percentage.toFixed(0) }}%</span>
+          <span v-if="quotaInfo.resetAt">{{ formatResetTime(quotaInfo.resetAt) }}</span>
         </div>
       </div>
 
-      <div v-else-if="balanceData.quota?.unlimited" class="flex items-center gap-2">
-        <i class="fas fa-infinity text-blue-500 dark:text-blue-400"></i>
-        <span class="text-xs text-gray-600 dark:text-gray-400">无限制</span>
-      </div>
-
-      <div
-        v-if="balanceData.cacheExpiresAt && balanceData.source === 'cache'"
-        class="text-xs text-gray-400 dark:text-gray-500"
-      >
-        缓存至: {{ formatCacheExpiry(balanceData.cacheExpiresAt) }}
+      <div v-else-if="balanceData.quota?.unlimited" class="flex items-center gap-1">
+        <i class="fas fa-infinity text-xs text-blue-500 dark:text-blue-400"></i>
+        <span class="text-xs text-gray-600 dark:text-gray-400">无限</span>
       </div>
     </div>
 
-    <div v-else class="text-xs text-gray-400 dark:text-gray-500">暂无余额数据</div>
+    <div v-else class="text-xs text-gray-400 dark:text-gray-500">—</div>
   </div>
 </template>
 
@@ -334,9 +309,7 @@ const formatQuotaNumber = (num) => {
 const formatCurrency = (amount) => {
   const value = Number(amount)
   if (!Number.isFinite(value)) return '$0.00'
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  return `$${value.toFixed(6)}`
+  return `$${value.toFixed(2)}`
 }
 
 const formatResetTime = (isoString) => {
