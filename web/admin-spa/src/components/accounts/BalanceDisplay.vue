@@ -10,35 +10,42 @@
       <span class="text-xs text-red-600 dark:text-red-400">{{ requestError }}</span>
     </div>
 
-    <div v-else-if="balanceData" class="space-y-1">
+    <div v-else-if="balanceData" class="space-y-0.5">
       <div v-if="balanceData.status === 'error' && balanceData.error" class="text-xs text-red-500">
         {{ balanceData.error }}
       </div>
 
-      <div class="flex items-center gap-1.5">
-        <i
-          class="fas text-xs"
-          :class="
-            balanceData.balance
-              ? 'fa-wallet text-green-600 dark:text-green-400'
-              : 'fa-chart-line text-gray-500 dark:text-gray-400'
-          "
-        ></i>
-        <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          {{ primaryText }}
-        </span>
-        <span class="rounded px-1 py-0.5 text-[10px]" :class="sourceClass">
-          {{ sourceLabel }}
-        </span>
+      <!-- 第一行：金额 + 刷新按钮 -->
+      <div class="flex items-center justify-between gap-1">
+        <div class="flex items-center gap-1">
+          <i
+            class="fas text-xs"
+            :class="
+              balanceData.balance
+                ? 'fa-wallet text-green-600 dark:text-green-400'
+                : 'fa-chart-line text-gray-500 dark:text-gray-400'
+            "
+          ></i>
+          <span class="truncate text-xs font-semibold text-gray-900 dark:text-gray-100">
+            {{ primaryText }}
+          </span>
+        </div>
         <button
           v-if="!hideRefresh"
-          class="ml-auto text-xs text-gray-500 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:text-blue-400"
+          class="shrink-0 text-xs text-gray-500 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:text-blue-400"
           :disabled="refreshing || !canRefresh"
           :title="refreshTitle"
           @click="refresh"
         >
           <i class="fas fa-sync-alt" :class="{ 'fa-spin': refreshing }"></i>
         </button>
+      </div>
+
+      <!-- 第二行：来源标签 -->
+      <div>
+        <span class="inline-block rounded px-1 py-0.5 text-[10px]" :class="sourceClass">
+          {{ sourceLabel }}
+        </span>
       </div>
 
       <!-- 配额（如适用） -->

@@ -761,28 +761,30 @@
                 </div>
                 <div v-else class="text-gray-400">无代理</div>
               </td>
-              <td class="whitespace-nowrap px-3 py-4">
-                <BalanceDisplay
-                  :account-id="account.id"
-                  :initial-balance="account.balanceInfo"
-                  :platform="account.platform"
-                  :query-mode="
-                    account.platform === 'gemini' && account.oauthProvider === 'antigravity'
-                      ? 'auto'
-                      : 'local'
-                  "
-                  @error="(error) => handleBalanceError(account.id, error)"
-                  @refreshed="(data) => handleBalanceRefreshed(account.id, data)"
-                />
-                <button
-                  v-if="!(account.platform === 'gemini' && account.oauthProvider === 'antigravity')"
-                  class="mt-0.5 flex items-center gap-1 text-[10px] text-blue-500 hover:underline dark:text-blue-300"
-                  title="配置余额查询脚本"
-                  @click="openBalanceScriptModal(account)"
-                >
-                  <i class="fas fa-cog" />
-                  <span>配置</span>
-                </button>
+              <td class="px-3 py-4">
+                <div class="w-[120px]">
+                  <BalanceDisplay
+                    :account-id="account.id"
+                    :initial-balance="account.balanceInfo"
+                    :platform="account.platform"
+                    :query-mode="
+                      account.platform === 'gemini' && account.oauthProvider === 'antigravity'
+                        ? 'auto'
+                        : 'local'
+                    "
+                    @error="(error) => handleBalanceError(account.id, error)"
+                    @refreshed="(data) => handleBalanceRefreshed(account.id, data)"
+                  />
+                  <button
+                    v-if="!(account.platform === 'gemini' && account.oauthProvider === 'antigravity')"
+                    class="mt-0.5 flex items-center gap-1 text-[10px] text-blue-500 hover:underline dark:text-blue-300"
+                    title="配置余额查询脚本"
+                    @click="openBalanceScriptModal(account)"
+                  >
+                    <i class="fas fa-cog" />
+                    <span>配置</span>
+                  </button>
+                </div>
               </td>
               <td class="whitespace-nowrap px-3 py-4 text-sm">
                 <div v-if="account.usage && account.usage.daily" class="space-y-1">
