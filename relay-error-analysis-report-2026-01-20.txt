@@ -1,0 +1,181 @@
+═══════════════════════════════════════════════════════════════
+           CLAUDE RELAY ERROR LOG ANALYSIS REPORT
+═══════════════════════════════════════════════════════════════
+
+Total Errors: 102541
+Analysis Period: 2026-01-20T15:47:59.000Z to 2026-01-20T07:30:27.000Z
+
+───────────────────────────────────────────────────────────────
+1. ERROR TYPE DISTRIBUTION
+───────────────────────────────────────────────────────────────
+  UPSTREAM_ERROR                  31540 (30.76%)
+  API_ERROR_STATUS                31185 (30.41%)
+  STREAM_RELAY_FAILED             30936 (30.17%)
+  OTHER                            7068 (6.89%)
+  NO_ACCOUNT_AVAILABLE             1812 (1.77%)
+
+───────────────────────────────────────────────────────────────
+2. TOP 20 ACCOUNTS BY ERROR COUNT (Pareto Analysis)
+───────────────────────────────────────────────────────────────
+   1. k5-pincc.ai                          2796 (2.73%) [Cum: 2.73%]
+   2. k5-pincc.ai):                        2796 (2.73%) [Cum: 5.45%]
+   3. k1-pincc.ai                          2795 (2.73%) [Cum: 8.18%]
+   4. k1-pincc.ai):                        2795 (2.73%) [Cum: 10.90%]
+   5. pincc-new2                           2794 (2.72%) [Cum: 13.63%]
+   6. pincc-new2):                         2794 (2.72%) [Cum: 16.35%]
+   7. pincc-k6                             2793 (2.72%) [Cum: 19.08%]
+   8. pincc-k6):                           2793 (2.72%) [Cum: 21.80%]
+   9. pincc-new5                           2792 (2.72%) [Cum: 24.52%]
+  10. pincc-new5):                         2792 (2.72%) [Cum: 27.25%]
+  11. k2-pincc.ai                          2790 (2.72%) [Cum: 29.97%]
+  12. k2-pincc.ai):                        2790 (2.72%) [Cum: 32.69%]
+  13. pincc-new1                           2789 (2.72%) [Cum: 35.41%]
+  14. pincc-new1):                         2789 (2.72%) [Cum: 38.13%]
+  15. pincc-new3                           2789 (2.72%) [Cum: 40.85%]
+  16. pincc-new3):                         2789 (2.72%) [Cum: 43.57%]
+  17. k3-pincc.ai                          2789 (2.72%) [Cum: 46.29%]
+  18. k3-pincc.ai):                        2789 (2.72%) [Cum: 49.01%]
+  19. pincc-new6                           2788 (2.72%) [Cum: 51.73%]
+  20. pincc-new6):                         2788 (2.72%) [Cum: 54.45%]
+
+───────────────────────────────────────────────────────────────
+3. API KEY GROUP ANALYSIS
+───────────────────────────────────────────────────────────────
+
+  Group: aws
+    Total Errors: 202
+    Affected Accounts: 0
+    Error Codes:
+      - NO_AVAILABLE_ACCOUNTS_IN_GROUP: 202
+
+  Group: antigravity
+    Total Errors: 167
+    Affected Accounts: 0
+    Error Codes:
+      - NO_AVAILABLE_ACCOUNTS_IN_GROUP: 167
+
+───────────────────────────────────────────────────────────────
+4. STATUS CODE DISTRIBUTION
+───────────────────────────────────────────────────────────────
+  HTTP 503: 26541 (25.88%)
+  HTTP 502: 3983 (3.88%)
+  HTTP 400: 410 (0.40%)
+  HTTP 429: 105 (0.10%)
+  HTTP 404: 77 (0.08%)
+  HTTP 524: 35 (0.03%)
+  HTTP 500: 30 (0.03%)
+  HTTP 401: 3 (0.00%)
+  HTTP 403: 1 (0.00%)
+
+───────────────────────────────────────────────────────────────
+5. HOURLY ERROR DISTRIBUTION (Time Series)
+───────────────────────────────────────────────────────────────
+   0:00   184 
+   1:00   324 
+   2:00   114 
+   3:00    19 
+   4:00   149 
+   5:00  2568 ██
+   6:00  3712 ███
+   7:00  5398 ████
+   8:00     0 
+   9:00     0 
+  10:00     0 
+  11:00     0 
+  12:00     0 
+  13:00     0 
+  14:00     0 
+  15:00 72782 ██████████████████████████████████████████████████
+  16:00  1887 █
+  17:00  2316 ██
+  18:00  2625 ██
+  19:00  3968 ███
+  20:00   645 
+  21:00   245 
+  22:00  1409 █
+  23:00  4196 ███
+
+───────────────────────────────────────────────────────────────
+6. FAILURE REASON ANALYSIS
+───────────────────────────────────────────────────────────────
+  [Max Depth Reached]                          7 (0.01%)
+
+───────────────────────────────────────────────────────────────
+7. DETAILED ACCOUNT BREAKDOWN (Top 10)
+───────────────────────────────────────────────────────────────
+
+  Account: k5-pincc.ai
+    Total Errors: 2796
+    Error Types:
+      - API_ERROR_STATUS: 2796
+    Status Codes:
+      - 503: 2396
+      - 502: 400
+
+  Account: k5-pincc.ai):
+    Total Errors: 2796
+    Error Types:
+      - STREAM_RELAY_FAILED: 2796
+
+  Account: k1-pincc.ai
+    Total Errors: 2795
+    Error Types:
+      - API_ERROR_STATUS: 2795
+    Status Codes:
+      - 503: 2396
+      - 502: 399
+
+  Account: k1-pincc.ai):
+    Total Errors: 2795
+    Error Types:
+      - STREAM_RELAY_FAILED: 2795
+
+  Account: pincc-new2
+    Total Errors: 2794
+    Error Types:
+      - API_ERROR_STATUS: 2794
+    Status Codes:
+      - 503: 2395
+      - 502: 399
+
+  Account: pincc-new2):
+    Total Errors: 2794
+    Error Types:
+      - STREAM_RELAY_FAILED: 2794
+
+  Account: pincc-k6
+    Total Errors: 2793
+    Error Types:
+      - API_ERROR_STATUS: 2793
+    Status Codes:
+      - 503: 2396
+      - 502: 397
+
+  Account: pincc-k6):
+    Total Errors: 2793
+    Error Types:
+      - STREAM_RELAY_FAILED: 2793
+
+  Account: pincc-new5
+    Total Errors: 2792
+    Error Types:
+      - API_ERROR_STATUS: 2792
+    Status Codes:
+      - 503: 2396
+      - 502: 396
+
+  Account: pincc-new5):
+    Total Errors: 2792
+    Error Types:
+      - STREAM_RELAY_FAILED: 2792
+
+═══════════════════════════════════════════════════════════════
+                    KEY INSIGHTS
+═══════════════════════════════════════════════════════════════
+• Top 3 accounts contribute 8.2% of all errors
+• Most common error type: UPSTREAM_ERROR (30.8%)
+• Peak error hour: 15:00 with 72782 errors
+• Total unique accounts affected: 81
+• Total API key groups affected: 2
+
+═══════════════════════════════════════════════════════════════

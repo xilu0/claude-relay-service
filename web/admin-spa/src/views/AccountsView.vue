@@ -1829,6 +1829,13 @@
       @close="closeAccountExpiryEdit"
       @save="handleSaveAccountExpiry"
     />
+
+    <!-- 账户测试弹窗 -->
+    <AccountTestModal
+      :show="showAccountTestModal"
+      :account="testingAccount"
+      @close="closeAccountTestModal"
+    />
   </div>
 </template>
 
@@ -1841,6 +1848,7 @@ import AccountForm from '@/components/accounts/AccountForm.vue'
 import CcrAccountForm from '@/components/accounts/CcrAccountForm.vue'
 import AccountUsageDetailModal from '@/components/accounts/AccountUsageDetailModal.vue'
 import AccountExpiryEditModal from '@/components/accounts/AccountExpiryEditModal.vue'
+import AccountTestModal from '@/components/accounts/AccountTestModal.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import CustomDropdown from '@/components/common/CustomDropdown.vue'
 
@@ -1958,6 +1966,10 @@ const showCreateAccountModal = ref(false)
 const newAccountPlatform = ref(null) // 跟踪新建账户选择的平台
 const showEditAccountModal = ref(false)
 const editingAccount = ref(null)
+
+// 账户测试相关状态
+const showAccountTestModal = ref(false)
+const testingAccount = ref(null)
 
 const collectAccountSearchableStrings = (account) => {
   const values = new Set()
@@ -3904,6 +3916,21 @@ onMounted(() => {
   // 首次加载时强制刷新所有数据
   loadAccounts(true)
 })
+
+// 测试账户相关方法
+const canTestAccount = (account) => {
+  return account.platform === 'claude' || account.platform === 'claude-console'
+}
+
+const openAccountTestModal = (account) => {
+  testingAccount.value = account
+  showAccountTestModal.value = true
+}
+
+const closeAccountTestModal = () => {
+  showAccountTestModal.value = false
+  testingAccount.value = null
+}
 </script>
 
 <style scoped>
