@@ -329,12 +329,6 @@ const formatResetTime = (isoString) => {
   return `${hours}小时${remainMinutes}分钟`
 }
 
-const formatCacheExpiry = (isoString) => {
-  const date = new Date(isoString)
-  if (Number.isNaN(date.getTime())) return '未知'
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
 watch(
   () => props.initialBalance,
   (newVal) => {
