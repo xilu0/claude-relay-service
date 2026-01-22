@@ -12,6 +12,8 @@ const openaiAccountService = require('../services/openaiAccountService')
 const openaiResponsesAccountService = require('../services/openaiResponsesAccountService')
 const azureOpenaiAccountService = require('../services/azureOpenaiAccountService')
 const accountGroupService = require('../services/accountGroupService')
+const accountBalanceService = require('../services/accountBalanceService')
+const balanceScriptService = require('../services/balanceScriptService')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -10559,6 +10561,211 @@ router.post('/gemini-api-accounts/:id/reset-status', authenticateAdmin, async (r
   } catch (error) {
     logger.error('❌ Failed to reset Gemini-API account status:', error)
     return res.status(500).json({ error: 'Failed to reset status', message: error.message })
+  }
+})
+
+// ============================================================================
+// 账户余额管理
+// ============================================================================
+
+const ensureValidPlatform = (rawPlatform) => {
+  const normalized = accountBalanceService.normalizePlatform(rawPlatform)
+  if (!normalized) {
+    return { ok: false, status: 400, error: '缺少 platform 参数' }
+  }
+
+  const supported = accountBalanceService.getSupportedPlatforms()
+  if (!supported.includes(normalized)) {
+    return { ok: false, status: 400, error: `不支持的平台: ${normalized}` }
+  }
+
+  return { ok: true, platform: normalized }
+}
+
+// 获取账户余额（默认本地统计优先，可选触发 Provider）
+router.get('/accounts/:accountId/balance', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform, queryApi } = req.query
+
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    const balance = await accountBalanceService.getAccountBalance(accountId, valid.platform, {
+      queryApi
+    })
+
+    if (!balance) {
+      return res.status(404).json({ success: false, error: 'Account not found' })
+    }
+
+    return res.json(balance)
+  } catch (error) {
+    logger.error('获取账户余额失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 强制刷新账户余额（强制触发查询：优先脚本；Provider 仅为降级）
+router.post('/accounts/:accountId/balance/refresh', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform } = req.body || {}
+
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    logger.info(`手动刷新余额: ${valid.platform}:${accountId}`)
+
+    const balance = await accountBalanceService.refreshAccountBalance(accountId, valid.platform)
+    if (!balance) {
+      return res.status(404).json({ success: false, error: 'Account not found' })
+    }
+
+    return res.json(balance)
+  } catch (error) {
+    logger.error('刷新账户余额失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 批量获取平台所有账户余额
+router.get('/accounts/balance/platform/:platform', authenticateAdmin, async (req, res) => {
+  try {
+    const { platform } = req.params
+    const { queryApi } = req.query
+
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    const balances = await accountBalanceService.getAllAccountsBalance(valid.platform, { queryApi })
+
+    return res.json({ success: true, data: balances })
+  } catch (error) {
+    logger.error('批量获取余额失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 获取余额汇总（Dashboard 用）
+router.get('/accounts/balance/summary', authenticateAdmin, async (req, res) => {
+  try {
+    const summary = await accountBalanceService.getBalanceSummary()
+    return res.json({ success: true, data: summary })
+  } catch (error) {
+    logger.error('获取余额汇总失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 清除缓存
+router.delete('/accounts/:accountId/balance/cache', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform } = req.query
+
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    await accountBalanceService.clearCache(accountId, valid.platform)
+
+    return res.json({ success: true, message: '缓存已清除' })
+  } catch (error) {
+    logger.error('清除缓存失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 获取余额脚本配置（单账户）
+router.get('/accounts/:accountId/balance/script', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform } = req.query
+
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    const config = await accountBalanceService.redis.getBalanceScriptConfig(
+      valid.platform,
+      accountId
+    )
+    return res.json({ success: true, data: config || null })
+  } catch (error) {
+    logger.error('获取余额脚本配置失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 保存余额脚本配置
+router.put('/accounts/:accountId/balance/script', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform } = req.query
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    const payload = req.body || {}
+    await accountBalanceService.redis.setBalanceScriptConfig(valid.platform, accountId, payload)
+    return res.json({ success: true, data: payload })
+  } catch (error) {
+    logger.error('保存余额脚本配置失败', error)
+    return res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// 测试余额脚本
+router.post('/accounts/:accountId/balance/script/test', authenticateAdmin, async (req, res) => {
+  try {
+    const { accountId } = req.params
+    const { platform } = req.query
+    const valid = ensureValidPlatform(platform)
+    if (!valid.ok) {
+      return res.status(valid.status).json({ success: false, error: valid.error })
+    }
+
+    const { isBalanceScriptEnabled } = require('../utils/featureFlags')
+    if (!isBalanceScriptEnabled()) {
+      return res.status(403).json({
+        success: false,
+        error: '余额脚本功能已禁用（可通过 BALANCE_SCRIPT_ENABLED=true 启用）'
+      })
+    }
+
+    const payload = req.body || {}
+    const { scriptBody } = payload
+    if (!scriptBody) {
+      return res.status(400).json({ success: false, error: '脚本内容不能为空' })
+    }
+
+    const result = await balanceScriptService.execute({
+      scriptBody,
+      timeoutSeconds: payload.timeoutSeconds || 10,
+      variables: {
+        baseUrl: payload.baseUrl || '',
+        apiKey: payload.apiKey || '',
+        token: payload.token || '',
+        accountId,
+        platform: valid.platform,
+        extra: payload.extra || ''
+      }
+    })
+
+    return res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error('测试余额脚本失败', error)
+    return res.status(400).json({ success: false, error: error.message })
   }
 })
 
