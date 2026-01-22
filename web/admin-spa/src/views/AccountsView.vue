@@ -1854,6 +1854,14 @@
       :show="showAccountTestModal"
       @close="closeAccountTestModal"
     />
+
+    <!-- 余额脚本配置弹窗 -->
+    <AccountBalanceScriptModal
+      :account="selectedAccountForScript"
+      :show="showBalanceScriptModal"
+      @close="closeBalanceScriptModal"
+      @saved="handleBalanceScriptSaved"
+    />
   </div>
 </template>
 
@@ -1867,6 +1875,7 @@ import CcrAccountForm from '@/components/accounts/CcrAccountForm.vue'
 import AccountUsageDetailModal from '@/components/accounts/AccountUsageDetailModal.vue'
 import AccountExpiryEditModal from '@/components/accounts/AccountExpiryEditModal.vue'
 import AccountTestModal from '@/components/accounts/AccountTestModal.vue'
+import AccountBalanceScriptModal from '@/components/accounts/AccountBalanceScriptModal.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import CustomDropdown from '@/components/common/CustomDropdown.vue'
 
@@ -1988,6 +1997,10 @@ const editingAccount = ref(null)
 // 账户测试相关状态
 const showAccountTestModal = ref(false)
 const testingAccount = ref(null)
+
+// 余额脚本配置弹窗状态
+const showBalanceScriptModal = ref(false)
+const selectedAccountForScript = ref(null)
 
 const collectAccountSearchableStrings = (account) => {
   const values = new Set()
@@ -3948,6 +3961,30 @@ const openAccountTestModal = (account) => {
 const closeAccountTestModal = () => {
   showAccountTestModal.value = false
   testingAccount.value = null
+}
+
+// 余额脚本配置相关方法
+const openBalanceScriptModal = (account) => {
+  selectedAccountForScript.value = account
+  showBalanceScriptModal.value = true
+}
+
+const closeBalanceScriptModal = () => {
+  showBalanceScriptModal.value = false
+  selectedAccountForScript.value = null
+}
+
+const handleBalanceScriptSaved = async () => {
+  showToast('余额脚本已保存', 'success')
+  const account = selectedAccountForScript.value
+  closeBalanceScriptModal()
+
+  if (!account?.id || !account?.platform) {
+    return
+  }
+
+  // 重新加载账户信息以刷新余额数据
+  await loadAccounts()
 }
 </script>
 
