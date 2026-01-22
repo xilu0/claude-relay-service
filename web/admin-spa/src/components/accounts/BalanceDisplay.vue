@@ -163,7 +163,7 @@ const sourceClass = computed(() => {
 
 const sourceLabel = computed(() => {
   const source = balanceData.value?.source
-  return { api: 'API', cache: '缓存', local: '本地' }[source] || '未知'
+  return { api: 'API', cache: '缓', local: '本地' }[source] || '?'
 })
 
 const quotaInfo = computed(() => {
@@ -254,7 +254,7 @@ const primaryText = computed(() => {
     return balanceData.value.balance.formattedAmount
   }
   const dailyCost = Number(balanceData.value?.statistics?.dailyCost || 0)
-  return `今日成本 ${formatCurrency(dailyCost)}`
+  return `成本 ${formatCurrency(dailyCost)}`
 })
 
 const load = async () => {

@@ -252,17 +252,17 @@
                 <i v-else class="fas fa-sort ml-1 text-gray-400" />
               </th>
               <th
-                class="w-[10%] min-w-[100px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                class="w-[8%] min-w-[90px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
               >
                 代理
               </th>
               <th
-                class="w-[10%] min-w-[90px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                class="w-[15%] min-w-[160px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
               >
-                今日使用
+                余额/配额
               </th>
               <th
-                class="w-[10%] min-w-[100px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
+                class="w-[9%] min-w-[100px] px-3 py-4 text-left text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300"
               >
                 <div class="flex items-center gap-2">
                   <span>会话窗口</span>
@@ -779,10 +779,12 @@
                     v-if="
                       !(account.platform === 'gemini' && account.oauthProvider === 'antigravity')
                     "
-                    class="text-blue-500 hover:underline dark:text-blue-300"
+                    class="flex items-center gap-1 text-xs text-blue-500 hover:underline dark:text-blue-300"
+                    title="配置余额查询脚本"
                     @click="openBalanceScriptModal(account)"
                   >
-                    配置余额脚本
+                    <i class="fas fa-cog" />
+                    <span>配置脚本</span>
                   </button>
                 </div>
               </td>
@@ -1382,10 +1384,12 @@
             <div class="mt-1 text-xs">
               <button
                 v-if="!(account.platform === 'gemini' && account.oauthProvider === 'antigravity')"
-                class="text-blue-500 hover:underline dark:text-blue-300"
+                class="flex items-center gap-1 text-xs text-blue-500 hover:underline dark:text-blue-300"
+                title="配置余额查询脚本"
                 @click="openBalanceScriptModal(account)"
               >
-                配置余额脚本
+                <i class="fas fa-cog" />
+                <span>配置脚本</span>
               </button>
             </div>
           </div>
