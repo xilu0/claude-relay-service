@@ -3039,6 +3039,122 @@ class RedisClient {
       }
     }
   }
+
+  // ============================================================================
+  // 💰 账户余额管理方法
+  // ============================================================================
+
+  // 账户余额缓存（API 查询结果）
+  async setAccountBalance(platform, accountId, balanceData, ttl = 3600) {
+    const key = `account_balance:${platform}:${accountId}`
+
+    const payload = {
+      balance:
+        balanceData && balanceData.balance !== null && balanceData.balance !== undefined
+          ? String(balanceData.balance)
+          : '',
+      currency: balanceData?.currency || 'USD',
+      lastRefreshAt: balanceData?.lastRefreshAt || new Date().toISOString(),
+      queryMethod: balanceData?.queryMethod || 'api',
+      status: balanceData?.status || 'success',
+      errorMessage: balanceData?.errorMessage || balanceData?.error || '',
+      rawData: balanceData?.rawData ? JSON.stringify(balanceData.rawData) : '',
+      quota: balanceData?.quota ? JSON.stringify(balanceData.quota) : ''
+    }
+
+    await this.client.hset(key, payload)
+    await this.client.expire(key, ttl)
+  }
+
+  async getAccountBalance(platform, accountId) {
+    const key = `account_balance:${platform}:${accountId}`
+    const [data, ttlSeconds] = await Promise.all([this.client.hgetall(key), this.client.ttl(key)])
+
+    if (!data || Object.keys(data).length === 0) {
+      return null
+    }
+
+    let rawData = null
+    if (data.rawData) {
+      try {
+        rawData = JSON.parse(data.rawData)
+      } catch (error) {
+        rawData = null
+      }
+    }
+
+    let quota = null
+    if (data.quota) {
+      try {
+        quota = JSON.parse(data.quota)
+      } catch (error) {
+        quota = null
+      }
+    }
+
+    return {
+      balance: data.balance ? parseFloat(data.balance) : null,
+      currency: data.currency || 'USD',
+      lastRefreshAt: data.lastRefreshAt || null,
+      queryMethod: data.queryMethod || null,
+      status: data.status || null,
+      errorMessage: data.errorMessage || '',
+      rawData,
+      quota,
+      ttlSeconds: Number.isFinite(ttlSeconds) ? ttlSeconds : null
+    }
+  }
+
+  // 账户余额缓存（本地统计）
+  async setLocalBalance(platform, accountId, statisticsData, ttl = 300) {
+    const key = `account_balance_local:${platform}:${accountId}`
+
+    await this.client.hset(key, {
+      estimatedBalance: JSON.stringify(statisticsData || {}),
+      lastCalculated: new Date().toISOString()
+    })
+    await this.client.expire(key, ttl)
+  }
+
+  async getLocalBalance(platform, accountId) {
+    const key = `account_balance_local:${platform}:${accountId}`
+    const data = await this.client.hgetall(key)
+
+    if (!data || !data.estimatedBalance) {
+      return null
+    }
+
+    try {
+      return JSON.parse(data.estimatedBalance)
+    } catch (error) {
+      return null
+    }
+  }
+
+  async deleteAccountBalance(platform, accountId) {
+    const key = `account_balance:${platform}:${accountId}`
+    const localKey = `account_balance_local:${platform}:${accountId}`
+    await this.client.del(key, localKey)
+  }
+
+  // 账户余额脚本配置
+  async setBalanceScriptConfig(platform, accountId, scriptConfig) {
+    const key = `account_balance_script:${platform}:${accountId}`
+    await this.client.set(key, JSON.stringify(scriptConfig || {}))
+  }
+
+  async getBalanceScriptConfig(platform, accountId) {
+    const key = `account_balance_script:${platform}:${accountId}`
+    const raw = await this.client.get(key)
+    if (!raw) {
+      return null
+    }
+    try {
+      return JSON.parse(raw)
+    } catch (error) {
+      return null
+    }
+  }
 }
 
 const redisClient = new RedisClient()
