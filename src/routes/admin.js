@@ -27,6 +27,7 @@ const CostCalculator = require('../utils/costCalculator')
 const pricingService = require('../services/pricingService')
 const claudeCodeHeadersService = require('../services/claudeCodeHeadersService')
 const webhookNotifier = require('../utils/webhookNotifier')
+const { validatePermissions } = require('../utils/inputValidator')
 const axios = require('axios')
 const crypto = require('crypto')
 const fs = require('fs')
@@ -1259,15 +1260,11 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
     }
 
     // 验证服务权限字段
-    if (
-      permissions !== undefined &&
-      permissions !== null &&
-      permissions !== '' &&
-      !['claude', 'gemini', 'openai', 'droid', 'all'].includes(permissions)
-    ) {
-      return res.status(400).json({
-        error: 'Invalid permissions value. Must be claude, gemini, openai, droid, or all'
-      })
+    if (permissions !== undefined) {
+      const validationError = validatePermissions(permissions)
+      if (validationError) {
+        return res.status(400).json({ error: validationError })
+      }
     }
 
     const newKey = await apiKeyService.generateApiKey({
@@ -1357,15 +1354,11 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
         .json({ error: 'Base name must be less than 90 characters to allow for numbering' })
     }
 
-    if (
-      permissions !== undefined &&
-      permissions !== null &&
-      permissions !== '' &&
-      !['claude', 'gemini', 'openai', 'droid', 'all'].includes(permissions)
-    ) {
-      return res.status(400).json({
-        error: 'Invalid permissions value. Must be claude, gemini, openai, droid, or all'
-      })
+    if (permissions !== undefined) {
+      const validationError = validatePermissions(permissions)
+      if (validationError) {
+        return res.status(400).json({ error: validationError })
+      }
     }
 
     // 生成批量API Keys
@@ -1468,13 +1461,11 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
       })
     }
 
-    if (
-      updates.permissions !== undefined &&
-      !['claude', 'gemini', 'openai', 'droid', 'all'].includes(updates.permissions)
-    ) {
-      return res.status(400).json({
-        error: 'Invalid permissions value. Must be claude, gemini, openai, droid, or all'
-      })
+    if (updates.permissions !== undefined) {
+      const validationError = validatePermissions(updates.permissions)
+      if (validationError) {
+        return res.status(400).json({ error: validationError })
+      }
     }
 
     logger.info(
@@ -1751,10 +1742,9 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
 
     if (permissions !== undefined) {
       // 验证权限值
-      if (!['claude', 'gemini', 'openai', 'droid', 'all'].includes(permissions)) {
-        return res.status(400).json({
-          error: 'Invalid permissions value. Must be claude, gemini, openai, droid, or all'
-        })
+      const validationError = validatePermissions(permissions)
+      if (validationError) {
+        return res.status(400).json({ error: validationError })
       }
       updates.permissions = permissions
     }

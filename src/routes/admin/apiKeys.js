@@ -5,45 +5,9 @@ const { authenticateAdmin } = require('../../middleware/auth')
 const logger = require('../../utils/logger')
 const CostCalculator = require('../../utils/costCalculator')
 const config = require('../../../config/config')
+const { validatePermissions, VALID_PERMISSIONS } = require('../../utils/inputValidator')
 
 const router = express.Router()
-
-// 有效的权限值列表
-const VALID_PERMISSIONS = ['claude', 'gemini', 'openai', 'droid']
-
-/**
- * 验证权限数组格式
- * @param {any} permissions - 权限值（可以是数组或其他）
- * @returns {string|null} - 返回错误消息，null 表示验证通过
- */
-function validatePermissions(permissions) {
-  // 空值或未定义表示全部服务
-  if (permissions === undefined || permissions === null || permissions === '') {
-    return null
-  }
-  // 兼容旧格式字符串
-  if (typeof permissions === 'string') {
-    if (permissions === 'all' || VALID_PERMISSIONS.includes(permissions)) {
-      return null
-    }
-    return `Invalid permissions value. Must be an array of: ${VALID_PERMISSIONS.join(', ')}`
-  }
-  // 新格式数组
-  if (Array.isArray(permissions)) {
-    // 空数组表示全部服务
-    if (permissions.length === 0) {
-      return null
-    }
-    // 验证数组中的每个值
-    for (const perm of permissions) {
-      if (!VALID_PERMISSIONS.includes(perm)) {
-        return `Invalid permission value "${perm}". Valid values are: ${VALID_PERMISSIONS.join(', ')}`
-      }
-    }
-    return null
-  }
-  return `Permissions must be an array. Valid values are: ${VALID_PERMISSIONS.join(', ')}`
-}
 
 // 👥 用户管理 (用于API Key分配)
 

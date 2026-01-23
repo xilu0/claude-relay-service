@@ -288,4 +288,46 @@ class InputValidator {
   }
 }
 
+// 有效的权限值列表
+const VALID_PERMISSIONS = ['claude', 'gemini', 'openai', 'droid']
+
+/**
+ * 验证 API Key 权限格式
+ * @param {any} permissions - 权限值（可以是数组、字符串或空值）
+ * @returns {string|null} - 返回错误消息，null 表示验证通过
+ */
+function validatePermissions(permissions) {
+  // 空值或未定义表示全部服务
+  if (permissions === undefined || permissions === null || permissions === '') {
+    return null
+  }
+
+  // 兼容旧格式字符串
+  if (typeof permissions === 'string') {
+    if (permissions === 'all' || VALID_PERMISSIONS.includes(permissions)) {
+      return null
+    }
+    return `Invalid permissions value. Must be an array of: ${VALID_PERMISSIONS.join(', ')}, or "all"`
+  }
+
+  // 新格式数组
+  if (Array.isArray(permissions)) {
+    // 空数组表示全部服务
+    if (permissions.length === 0) {
+      return null
+    }
+    // 验证数组中的每个值
+    for (const perm of permissions) {
+      if (!VALID_PERMISSIONS.includes(perm)) {
+        return `Invalid permission value "${perm}". Valid values are: ${VALID_PERMISSIONS.join(', ')}`
+      }
+    }
+    return null
+  }
+
+  return `Permissions must be an array or string. Valid values are: ${VALID_PERMISSIONS.join(', ')}, or "all"`
+}
+
 module.exports = new InputValidator()
+module.exports.validatePermissions = validatePermissions
+module.exports.VALID_PERMISSIONS = VALID_PERMISSIONS
