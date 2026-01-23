@@ -1223,6 +1223,15 @@
                     <span class="ml-1">测试</span>
                   </button>
                   <button
+                    v-if="canScheduleTest(account)"
+                    class="rounded bg-purple-100 px-2.5 py-1 text-xs font-medium text-purple-700 transition-colors hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-800/50"
+                    :title="'配置定时测试'"
+                    @click="openScheduledTestModal(account)"
+                  >
+                    <i class="fas fa-clock" />
+                    <span class="ml-1">定时</span>
+                  </button>
+                  <button
                     class="rounded bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200"
                     :title="'编辑账户'"
                     @click="editAccount(account)"
@@ -1690,6 +1699,15 @@
             </button>
 
             <button
+              v-if="canScheduleTest(account)"
+              class="flex flex-1 items-center justify-center gap-1 rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-600 transition-colors hover:bg-purple-100 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-800/50"
+              @click="openScheduledTestModal(account)"
+            >
+              <i class="fas fa-clock" />
+              定时
+            </button>
+
+            <button
               class="flex-1 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 transition-colors hover:bg-gray-100"
               @click="editAccount(account)"
             >
@@ -1862,6 +1880,17 @@
       @close="closeAccountTestModal"
     />
 
+    <!-- 账户定时测试配置弹窗 -->
+    <AccountScheduledTestModal
+      v-if="scheduledTestAccount"
+      :account-id="scheduledTestAccount.id"
+      :account-name="scheduledTestAccount.name"
+      :is-open="showScheduledTestModal"
+      :platform="getAccountPlatform(scheduledTestAccount)"
+      @close="closeScheduledTestModal"
+      @saved="handleScheduledTestSaved"
+    />
+
     <!-- 余额脚本配置弹窗 -->
     <AccountBalanceScriptModal
       :account="selectedAccountForScript"
@@ -1882,6 +1911,7 @@ import CcrAccountForm from '@/components/accounts/CcrAccountForm.vue'
 import AccountUsageDetailModal from '@/components/accounts/AccountUsageDetailModal.vue'
 import AccountExpiryEditModal from '@/components/accounts/AccountExpiryEditModal.vue'
 import AccountTestModal from '@/components/accounts/AccountTestModal.vue'
+import AccountScheduledTestModal from '@/components/accounts/AccountScheduledTestModal.vue'
 import AccountBalanceScriptModal from '@/components/accounts/AccountBalanceScriptModal.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import CustomDropdown from '@/components/common/CustomDropdown.vue'
@@ -2004,6 +2034,10 @@ const editingAccount = ref(null)
 // 账户测试相关状态
 const showAccountTestModal = ref(false)
 const testingAccount = ref(null)
+
+// 账户定时测试配置状态
+const showScheduledTestModal = ref(false)
+const scheduledTestAccount = ref(null)
 
 // 余额脚本配置弹窗状态
 const showBalanceScriptModal = ref(false)
@@ -3968,6 +4002,34 @@ const openAccountTestModal = (account) => {
 const closeAccountTestModal = () => {
   showAccountTestModal.value = false
   testingAccount.value = null
+}
+
+// 定时测试配置相关方法
+const canScheduleTest = (account) => {
+  // 支持 Claude、Claude Console 和 Gemini 平台的定时测试
+  return ['claude', 'claude-console', 'gemini'].includes(account.platform)
+}
+
+const getAccountPlatform = (account) => {
+  // 返回标准化的平台名称
+  return account.platform || 'claude'
+}
+
+const openScheduledTestModal = (account) => {
+  scheduledTestAccount.value = account
+  showScheduledTestModal.value = true
+}
+
+const closeScheduledTestModal = () => {
+  showScheduledTestModal.value = false
+  scheduledTestAccount.value = null
+}
+
+const handleScheduledTestSaved = () => {
+  showToast('定时测试配置已保存', 'success')
+  closeScheduledTestModal()
+  // 重新加载账户列表以更新状态
+  loadAccounts()
 }
 
 // 余额脚本配置相关方法

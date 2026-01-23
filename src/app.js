@@ -514,7 +514,7 @@ class Application {
     try {
       await this.initialize()
 
-      this.server = this.app.listen(config.server.port, config.server.host, () => {
+      this.server = this.app.listen(config.server.port, config.server.host, async () => {
         logger.start(
           `🚀 Claude Relay Service started on ${config.server.host}:${config.server.port}`
         )
@@ -527,6 +527,15 @@ class Application {
         logger.info(`⚙️  Admin API: http://${config.server.host}:${config.server.port}/admin`)
         logger.info(`🏥 Health check: http://${config.server.host}:${config.server.port}/health`)
         logger.info(`📊 Metrics: http://${config.server.host}:${config.server.port}/metrics`)
+
+        // 🚀 启动账户测试调度服务
+        try {
+          const accountTestSchedulerService = require('./services/accountTestSchedulerService')
+          await accountTestSchedulerService.start()
+          logger.success('✅ Account test scheduler service started')
+        } catch (error) {
+          logger.error('❌ Failed to start account test scheduler service:', error)
+        }
       })
 
       const serverTimeout = 600000 // 默认10分钟
@@ -722,6 +731,15 @@ class Application {
             logger.info('🚨 Rate limit cleanup service stopped')
           } catch (error) {
             logger.error('❌ Error stopping rate limit cleanup service:', error)
+          }
+
+          // 🛑 停止账户测试调度服务
+          try {
+            const accountTestSchedulerService = require('./services/accountTestSchedulerService')
+            accountTestSchedulerService.stop()
+            logger.info('🧪 Account test scheduler service stopped')
+          } catch (error) {
+            logger.error('❌ Error stopping account test scheduler service:', error)
           }
 
           // 🔢 清理所有并发计数（Phase 1 修复：防止重启泄漏）

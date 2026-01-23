@@ -3443,6 +3443,117 @@ router.post('/claude-accounts/:accountId/test', authenticateAdmin, async (req, r
   }
 })
 
+// 🧪 Claude 账户定时测试配置
+const accountTestSchedulerService = require('../services/accountTestSchedulerService')
+
+// 获取账户测试配置
+router.get('/claude-accounts/:accountId/test-config', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+
+  try {
+    const testConfig = await redis.getAccountTestConfig(accountId, 'claude')
+    return res.json({ success: true, data: testConfig })
+  } catch (error) {
+    logger.error(`❌ Failed to get test config for Claude account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to get test config',
+      message: error.message
+    })
+  }
+})
+
+// 保存账户测试配置
+router.put('/claude-accounts/:accountId/test-config', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+  const { enabled, cronExpression, model } = req.body
+
+  try {
+    // 验证必填字段
+    if (enabled === undefined || !cronExpression || !model) {
+      return res.status(400).json({
+        error: 'Missing required fields: enabled, cronExpression, model'
+      })
+    }
+
+    // 验证 cron 表达式
+    const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Invalid cron expression',
+        message: validation.message
+      })
+    }
+
+    // 保存配置
+    const savedConfig = await redis.saveAccountTestConfig(accountId, 'claude', {
+      enabled,
+      cronExpression,
+      model
+    })
+
+    return res.json({
+      success: true,
+      data: savedConfig,
+      message: 'Test configuration saved successfully'
+    })
+  } catch (error) {
+    logger.error(`❌ Failed to save test config for Claude account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to save test config',
+      message: error.message
+    })
+  }
+})
+
+// 获取账户测试历史
+router.get('/claude-accounts/:accountId/test-history', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+  const { limit } = req.query
+
+  try {
+    const history = await redis.getAccountTestResults(
+      accountId,
+      'claude',
+      limit ? parseInt(limit, 10) : 10
+    )
+    return res.json({ success: true, data: history })
+  } catch (error) {
+    logger.error(`❌ Failed to get test history for Claude account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to get test history',
+      message: error.message
+    })
+  }
+})
+
+// 验证 cron 表达式（不保存）
+router.post(
+  '/claude-accounts/:accountId/test-schedule-validate',
+  authenticateAdmin,
+  async (req, res) => {
+    const { cronExpression } = req.body
+
+    try {
+      if (!cronExpression) {
+        return res.status(400).json({
+          valid: false,
+          error: 'cronExpression is required'
+        })
+      }
+
+      const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+      return res.json(validation)
+    } catch (error) {
+      logger.error('❌ Failed to validate cron expression:', error)
+      return res.status(500).json({
+        valid: false,
+        error: 'Failed to validate cron expression',
+        message: error.message
+      })
+    }
+  }
+)
+
 // 🎮 Claude Console 账户管理
 
 // 获取所有Claude Console账户
@@ -3908,6 +4019,128 @@ router.post('/claude-console-accounts/:accountId/test', authenticateAdmin, async
     // 错误已在服务层处理，这里仅做日志记录
   }
 })
+
+// 🧪 Claude Console 账户定时测试配置
+
+// 获取账户测试配置
+router.get(
+  '/claude-console-accounts/:accountId/test-config',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+
+    try {
+      const testConfig = await redis.getAccountTestConfig(accountId, 'claude-console')
+      return res.json({ success: true, data: testConfig })
+    } catch (error) {
+      logger.error(`❌ Failed to get test config for Claude Console account ${accountId}:`, error)
+      return res.status(500).json({
+        error: 'Failed to get test config',
+        message: error.message
+      })
+    }
+  }
+)
+
+// 保存账户测试配置
+router.put(
+  '/claude-console-accounts/:accountId/test-config',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+    const { enabled, cronExpression, model } = req.body
+
+    try {
+      // 验证必填字段
+      if (enabled === undefined || !cronExpression || !model) {
+        return res.status(400).json({
+          error: 'Missing required fields: enabled, cronExpression, model'
+        })
+      }
+
+      // 验证 cron 表达式
+      const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Invalid cron expression',
+          message: validation.message
+        })
+      }
+
+      // 保存配置
+      const savedConfig = await redis.saveAccountTestConfig(accountId, 'claude-console', {
+        enabled,
+        cronExpression,
+        model
+      })
+
+      return res.json({
+        success: true,
+        data: savedConfig,
+        message: 'Test configuration saved successfully'
+      })
+    } catch (error) {
+      logger.error(`❌ Failed to save test config for Claude Console account ${accountId}:`, error)
+      return res.status(500).json({
+        error: 'Failed to save test config',
+        message: error.message
+      })
+    }
+  }
+)
+
+// 获取账户测试历史
+router.get(
+  '/claude-console-accounts/:accountId/test-history',
+  authenticateAdmin,
+  async (req, res) => {
+    const { accountId } = req.params
+    const { limit } = req.query
+
+    try {
+      const history = await redis.getAccountTestResults(
+        accountId,
+        'claude-console',
+        limit ? parseInt(limit, 10) : 10
+      )
+      return res.json({ success: true, data: history })
+    } catch (error) {
+      logger.error(`❌ Failed to get test history for Claude Console account ${accountId}:`, error)
+      return res.status(500).json({
+        error: 'Failed to get test history',
+        message: error.message
+      })
+    }
+  }
+)
+
+// 验证 cron 表达式（不保存）
+router.post(
+  '/claude-console-accounts/:accountId/test-schedule-validate',
+  authenticateAdmin,
+  async (req, res) => {
+    const { cronExpression } = req.body
+
+    try {
+      if (!cronExpression) {
+        return res.status(400).json({
+          valid: false,
+          error: 'cronExpression is required'
+        })
+      }
+
+      const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+      return res.json(validation)
+    } catch (error) {
+      logger.error('❌ Failed to validate cron expression:', error)
+      return res.status(500).json({
+        valid: false,
+        error: 'Failed to validate cron expression',
+        message: error.message
+      })
+    }
+  }
+)
 
 // 🔧 CCR 账户管理
 
@@ -5137,6 +5370,134 @@ router.post('/gemini-accounts/:id/reset-status', authenticateAdmin, async (req, 
     return res.status(500).json({ error: 'Failed to reset status', message: error.message })
   }
 })
+
+// 🧪 Gemini 账户定时测试配置
+
+// 测试 Gemini 账户连通性（手动触发）
+router.post('/gemini-accounts/:accountId/test', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+  const { model } = req.body
+
+  try {
+    const result = await accountTestSchedulerService.triggerTest(accountId, 'gemini', model)
+    if (result.success) {
+      return res.json({ success: true, message: 'Test triggered successfully' })
+    } else {
+      return res.status(500).json({ error: 'Test failed', message: result.error })
+    }
+  } catch (error) {
+    logger.error(`❌ Failed to test Gemini account:`, error)
+    return res.status(500).json({ error: 'Test failed', message: error.message })
+  }
+})
+
+// 获取账户测试配置
+router.get('/gemini-accounts/:accountId/test-config', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+
+  try {
+    const testConfig = await redis.getAccountTestConfig(accountId, 'gemini')
+    return res.json({ success: true, data: testConfig })
+  } catch (error) {
+    logger.error(`❌ Failed to get test config for Gemini account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to get test config',
+      message: error.message
+    })
+  }
+})
+
+// 保存账户测试配置
+router.put('/gemini-accounts/:accountId/test-config', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+  const { enabled, cronExpression, model } = req.body
+
+  try {
+    // 验证必填字段
+    if (enabled === undefined || !cronExpression || !model) {
+      return res.status(400).json({
+        error: 'Missing required fields: enabled, cronExpression, model'
+      })
+    }
+
+    // 验证 cron 表达式
+    const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Invalid cron expression',
+        message: validation.message
+      })
+    }
+
+    // 保存配置
+    const savedConfig = await redis.saveAccountTestConfig(accountId, 'gemini', {
+      enabled,
+      cronExpression,
+      model
+    })
+
+    return res.json({
+      success: true,
+      data: savedConfig,
+      message: 'Test configuration saved successfully'
+    })
+  } catch (error) {
+    logger.error(`❌ Failed to save test config for Gemini account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to save test config',
+      message: error.message
+    })
+  }
+})
+
+// 获取账户测试历史
+router.get('/gemini-accounts/:accountId/test-history', authenticateAdmin, async (req, res) => {
+  const { accountId } = req.params
+  const { limit } = req.query
+
+  try {
+    const history = await redis.getAccountTestResults(
+      accountId,
+      'gemini',
+      limit ? parseInt(limit, 10) : 10
+    )
+    return res.json({ success: true, data: history })
+  } catch (error) {
+    logger.error(`❌ Failed to get test history for Gemini account ${accountId}:`, error)
+    return res.status(500).json({
+      error: 'Failed to get test history',
+      message: error.message
+    })
+  }
+})
+
+// 验证 cron 表达式（不保存）
+router.post(
+  '/gemini-accounts/:accountId/test-schedule-validate',
+  authenticateAdmin,
+  async (req, res) => {
+    const { cronExpression } = req.body
+
+    try {
+      if (!cronExpression) {
+        return res.status(400).json({
+          valid: false,
+          error: 'cronExpression is required'
+        })
+      }
+
+      const validation = accountTestSchedulerService.validateCronExpression(cronExpression)
+      return res.json(validation)
+    } catch (error) {
+      logger.error('❌ Failed to validate cron expression:', error)
+      return res.status(500).json({
+        valid: false,
+        error: 'Failed to validate cron expression',
+        message: error.message
+      })
+    }
+  }
+)
 
 // 📊 账户使用统计
 
@@ -10685,11 +11046,11 @@ router.get('/accounts/:accountId/balance/script', authenticateAdmin, async (req,
       return res.status(valid.status).json({ success: false, error: valid.error })
     }
 
-    const config = await accountBalanceService.redis.getBalanceScriptConfig(
+    const scriptConfig = await accountBalanceService.redis.getBalanceScriptConfig(
       valid.platform,
       accountId
     )
-    return res.json({ success: true, data: config || null })
+    return res.json({ success: true, data: scriptConfig || null })
   } catch (error) {
     logger.error('获取余额脚本配置失败', error)
     return res.status(500).json({ success: false, error: error.message })

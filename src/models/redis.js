@@ -3155,6 +3155,173 @@ class RedisClient {
       return null
     }
   }
+
+  // ==================== Account Test Configuration ====================
+  // 保存账户测试配置
+  async saveAccountTestConfig(accountId, platform, testConfig) {
+    const key = `account:test_config:${platform}:${accountId}`
+
+    // 向后兼容：如果旧配置有 testHour 字段，转换为 cron 表达式
+    if (testConfig.testHour !== undefined && !testConfig.cronExpression) {
+      const hour = parseInt(testConfig.testHour, 10)
+      if (hour >= 0 && hour < 24) {
+        testConfig.cronExpression = `0 ${hour} * * *` // 每天指定小时执行
+      }
+    }
+
+    // 设置默认值
+    const configData = {
+      enabled: testConfig.enabled !== undefined ? testConfig.enabled : false,
+      cronExpression: testConfig.cronExpression || testConfig.testSchedule || '* * * * *', // 默认每天8点
+      model: testConfig.model || 'claude-haiku-4-5-20251001',
+      createdAt: testConfig.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+
+    // 修复：将对象转换为键值对数组，Redis Hash 需要存储字符串
+    const fieldValuePairs = []
+    for (const [field, value] of Object.entries(configData)) {
+      fieldValuePairs.push(field, String(value))
+    }
+
+    await this.client.hset(key, ...fieldValuePairs)
+
+    // 添加日志确认保存成功
+    logger.info(`✅ Saved test config for ${platform} account ${accountId}`, {
+      key,
+      configData
+    })
+
+    return configData
+  }
+
+  // 获取账户测试配置
+  async getAccountTestConfig(accountId, platform) {
+    const key = `account:test_config:${platform}:${accountId}`
+    const configData = await this.client.hgetall(key)
+
+    logger.info(`🔍 getAccountTestConfig - Key: ${key}`, {
+      accountId,
+      platform,
+      configDataKeys: Object.keys(configData || {}),
+      rawEnabled: configData?.enabled,
+      rawEnabledType: typeof configData?.enabled
+    })
+
+    if (!configData || Object.keys(configData).length === 0) {
+      logger.warn(`⚠️  No test config found for ${platform}:${accountId}, returning defaults`)
+      // 返回默认配置
+      return {
+        enabled: false,
+        cronExpression: '* * * * *',
+        model: 'claude-haiku-4-5-20251001'
+      }
+    }
+
+    // 转换 enabled 字符串为布尔值
+    const result = {
+      ...configData,
+      enabled: configData.enabled === 'true' || configData.enabled === true
+    }
+
+    logger.info(`✅ Loaded test config for ${platform}:${accountId}`, {
+      enabled: result.enabled,
+      cronExpression: result.cronExpression,
+      model: result.model
+    })
+
+    return result
+  }
+
+  // 获取所有启用测试的账户
+  async getEnabledTestAccounts(platform) {
+    const pattern = `account:test_config:${platform}:*`
+    const keys = await this.client.keys(pattern)
+
+    const enabledAccounts = []
+
+    for (const key of keys) {
+      const configData = await this.client.hgetall(key)
+      if (configData && (configData.enabled === 'true' || configData.enabled === true)) {
+        // 从 key 中提取 accountId: account:test_config:platform:accountId
+        const accountId = key.split(':').slice(3).join(':')
+        enabledAccounts.push({
+          accountId,
+          platform,
+          config: {
+            ...configData,
+            enabled: true
+          }
+        })
+      }
+    }
+
+    return enabledAccounts
+  }
+
+  // 保存测试结果
+  async saveAccountTestResult(accountId, platform, result) {
+    const key = `account:test_result:${platform}:${accountId}`
+    const resultData = {
+      timestamp: result.timestamp || new Date().toISOString(),
+      success: result.success,
+      error: result.error || '',
+      duration: result.duration || 0,
+      usage: JSON.stringify(result.usage || {})
+    }
+
+    // 使用 LPUSH 添加到列表头部（最新的结果在前面）
+    await this.client.lpush(key, JSON.stringify(resultData))
+
+    // 限制列表长度，只保留最近100条结果
+    await this.client.ltrim(key, 0, 99)
+
+    return resultData
+  }
+
+  // 获取测试历史
+  async getAccountTestResults(accountId, platform, limit = 10) {
+    const key = `account:test_result:${platform}:${accountId}`
+
+    // 获取最近的测试结果
+    const results = await this.client.lrange(key, 0, limit - 1)
+
+    return results
+      .map((item) => {
+        try {
+          const parsed = JSON.parse(item)
+          return {
+            ...parsed,
+            usage: parsed.usage ? JSON.parse(parsed.usage) : {}
+          }
+        } catch (error) {
+          logger.error('Failed to parse test result:', error)
+          return null
+        }
+      })
+      .filter((item) => item !== null)
+  }
+
+  // 设置最后测试时间
+  async setAccountLastTestTime(accountId, platform, timestamp) {
+    const key = `account:last_test:${platform}:${accountId}`
+    await this.client.set(key, timestamp || new Date().toISOString())
+  }
+
+  // 获取最后测试时间
+  async getAccountLastTestTime(accountId, platform) {
+    const key = `account:last_test:${platform}:${accountId}`
+    return await this.client.get(key)
+  }
+
+  // 删除账户测试配置（当账户被删除时调用）
+  async deleteAccountTestConfig(accountId, platform) {
+    const configKey = `account:test_config:${platform}:${accountId}`
+    const resultKey = `account:test_result:${platform}:${accountId}`
+    const lastTestKey = `account:last_test:${platform}:${accountId}`
+
+    await this.client.del(configKey, resultKey, lastTestKey)
+  }
 }
 
 const redisClient = new RedisClient()

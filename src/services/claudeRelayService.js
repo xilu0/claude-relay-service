@@ -596,8 +596,7 @@ class ClaudeRelayService {
       ) {
         requestOptions = { ...requestOptions, useRandomizedToolNames: true }
         const retryResult = await makeRequestWithRetries(requestOptions)
-        response = retryResult.response
-        retryCount = retryResult.retryCount
+        ;({ response, retryCount } = retryResult)
       }
 
       // 如果进行了重试，记录最终结果
@@ -1413,7 +1412,7 @@ class ClaudeRelayService {
       return prepared.abortResponse
     }
 
-    const { bodyString, headers, isRealClaudeCode, toolNameMap } = prepared
+    const { bodyString, headers, isRealClaudeCode: _isRealClaudeCode, toolNameMap } = prepared
 
     return new Promise((resolve, reject) => {
       // 支持自定义路径（如 count_tokens）
@@ -1465,7 +1464,7 @@ class ClaudeRelayService {
               responseBody = responseData.toString('utf8')
             }
 
-            if (!isRealClaudeCode) {
+            if (!_isRealClaudeCode) {
               responseBody = this._restoreToolNamesInResponseBody(responseBody, toolNameMap)
             }
 
@@ -1825,7 +1824,7 @@ class ClaudeRelayService {
       return prepared.abortResponse
     }
 
-    const { bodyString, headers, isRealClaudeCode, toolNameMap } = prepared
+    const { bodyString, headers, isRealClaudeCode: _isRealClaudeCode, toolNameMap } = prepared
     const toolNameStreamTransformer = this._createToolNameStripperStreamTransformer(
       streamTransformer,
       toolNameMap
