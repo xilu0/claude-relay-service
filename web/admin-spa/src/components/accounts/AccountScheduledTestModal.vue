@@ -135,6 +135,90 @@
           </p>
         </div>
 
+        <!-- Test History -->
+        <div v-if="config.enabled">
+          <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">
+            Recent Test History
+          </label>
+
+          <!-- History Records -->
+          <div
+            v-if="testHistory.length > 0"
+            class="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+          >
+            <div
+              v-for="(record, index) in testHistory"
+              :key="index"
+              class="flex items-center justify-between text-xs"
+            >
+              <div class="flex items-center gap-2">
+                <!-- Success Icon -->
+                <svg
+                  v-if="record.success"
+                  class="h-4 w-4 text-green-500"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                >
+                  <path
+                    clip-rule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                    fill-rule="evenodd"
+                  />
+                </svg>
+                <!-- Failure Icon -->
+                <svg v-else class="h-4 w-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    clip-rule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    fill-rule="evenodd"
+                  />
+                </svg>
+
+                <!-- Timestamp -->
+                <span class="text-gray-600 dark:text-gray-400">
+                  {{ formatTimestamp(record.timestamp) }}
+                </span>
+              </div>
+
+              <!-- Latency or Error -->
+              <span
+                v-if="record.success && record.duration"
+                class="text-gray-500 dark:text-gray-500"
+              >
+                {{ Math.round(record.duration) }}ms
+              </span>
+              <span
+                v-else-if="record.error"
+                class="max-w-[200px] truncate text-red-500"
+                :title="record.error"
+              >
+                {{ record.error }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div
+            v-else
+            class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center dark:border-gray-700 dark:bg-gray-800/50"
+          >
+            <svg
+              class="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-gray-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+              />
+            </svg>
+            <p class="text-sm text-gray-500 dark:text-gray-400">No test records yet</p>
+          </div>
+        </div>
+
         <!-- Error Message -->
         <div v-if="errorMessage" class="rounded-lg bg-red-50 p-3 dark:bg-red-900/20">
           <p class="text-sm text-red-600 dark:text-red-400">{{ errorMessage }}</p>
@@ -199,6 +283,7 @@ export default {
       saving: false,
       errorMessage: '',
       cronValidationMessage: null,
+      testHistory: [],
       config: {
         enabled: false,
         cronExpression: '* * * * *',
@@ -290,33 +375,43 @@ export default {
     },
 
     async loadConfig() {
+      /* eslint-disable no-console */
       console.log('🔍 loadConfig called', {
         accountId: this.accountId,
         platform: this.platform,
         apiEndpoint: this.apiEndpoint
       })
+      /* eslint-enable no-console */
 
       this.loading = true
       this.errorMessage = ''
       this.cronValidationMessage = null // 重置验证状态
 
       try {
+        /* eslint-disable no-console */
         console.log('📡 Fetching config from:', this.apiEndpoint)
         const response = await apiClient.get(this.apiEndpoint)
         console.log('✅ Got response:', response)
+        /* eslint-enable no-console */
 
         if (response.success) {
           this.config = { ...this.config, ...response.data }
+          /* eslint-disable-next-line no-console */
           console.log('✅ Config loaded:', this.config)
 
           // 加载成功后立即验证 cron 表达式
           if (this.config.cronExpression) {
             await this.validateCron()
           }
+
+          // Load test history
+          await this.loadTestHistory()
         } else {
+          /* eslint-disable-next-line no-console */
           console.warn('⚠️ Response success is false:', response)
         }
       } catch (error) {
+        /* eslint-disable-next-line no-console */
         console.error('❌ Failed to load config:', error)
         this.errorMessage = 'Failed to load configuration. Using defaults.'
         // 即使加载失败，也验证默认的 cron 表达式
@@ -325,6 +420,23 @@ export default {
         }
       } finally {
         this.loading = false
+      }
+    },
+
+    async loadTestHistory() {
+      try {
+        const historyEndpoint = this.apiEndpoint.replace('/test-config', '/test-history')
+        const historyResponse = await apiClient.get(historyEndpoint)
+
+        if (historyResponse.success && historyResponse.data) {
+          this.testHistory = Array.isArray(historyResponse.data) ? historyResponse.data : []
+        } else {
+          this.testHistory = []
+        }
+      } catch (error) {
+        /* eslint-disable-next-line no-console */
+        console.warn('Failed to load test history:', error)
+        this.testHistory = [] // Fail silently, don't block UI
       }
     },
 
@@ -434,6 +546,7 @@ export default {
           this.closeModal()
         }
       } catch (error) {
+        /* eslint-disable-next-line no-console */
         console.error('Failed to save test config:', error)
         this.errorMessage =
           error.response?.data?.message || error.message || 'Failed to save configuration'
@@ -446,6 +559,19 @@ export default {
       this.$emit('close')
       this.errorMessage = ''
       this.cronValidationMessage = null
+      this.testHistory = []
+    },
+
+    formatTimestamp(timestamp) {
+      if (!timestamp) return 'Unknown'
+      const date = new Date(timestamp)
+      return date.toLocaleString('en-US', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      })
     }
   }
 }
