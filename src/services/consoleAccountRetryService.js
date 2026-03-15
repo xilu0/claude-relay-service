@@ -28,7 +28,14 @@ class ConsoleAccountRetryService {
     const apiKeyName = req.apiKey?.name || 'Unknown'
     // 重试参数：默认只重试 1 轮，减少 Redis 查询压力
     // 每轮尝试所有可用账户，1 轮通常足够（多账户场景）
-    const { maxRetries = 1, baseDelay = 2000, maxDelay = 120000, usageCallback = null } = options
+    const {
+      maxRetries = 1,
+      baseDelay = 2000,
+      maxDelay = 120000,
+      usageCallback = null,
+      stickyAccountId = null,
+      sessionHash = null
+    } = options
 
     try {
       // 定义失败回调：发送webhook告警（经过节流服务）
@@ -65,10 +72,11 @@ class ConsoleAccountRetryService {
           logger.info(`🔄 Starting Console account retry loop, round 1/${maxRetries}`)
         }
 
-        // 获取可用的Console账户
+        // 获取可用的Console账户（粘性会话账户优先）
         const availableAccounts = await this._getAvailableConsoleAccounts(
           apiKeyData,
-          req.body?.model
+          req.body?.model,
+          stickyAccountId
         )
 
         if (availableAccounts.length === 0) {
@@ -106,6 +114,12 @@ class ConsoleAccountRetryService {
               )
 
               // 流式请求成功（已发送响应）
+              // 更新粘性会话映射：确保后续请求继续使用同一账户以利用缓存
+              if (sessionHash) {
+                this._updateStickySession(sessionHash, account, stickyAccountId).catch((err) =>
+                  logger.error('Failed to update sticky session after stream success:', err)
+                )
+              }
               return true
             } else {
               // 非流式请求
@@ -118,6 +132,13 @@ class ConsoleAccountRetryService {
               // 检查响应状态
               if (result.status === 200 || result.status === 201) {
                 logger.info(`✅ Console request succeeded with account ${account.name}`)
+
+                // 更新粘性会话映射：确保后续请求继续使用同一账户以利用缓存
+                if (sessionHash) {
+                  this._updateStickySession(sessionHash, account, stickyAccountId).catch((err) =>
+                    logger.error('Failed to update sticky session after non-stream success:', err)
+                  )
+                }
 
                 // 记录非流式请求的 usage 统计
                 if (result.data?.usage && usageCallback) {
@@ -264,9 +285,10 @@ class ConsoleAccountRetryService {
    * 获取所有可用的Claude Console账户
    * @param {Object} apiKeyData - API Key数据
    * @param {string} requestedModel - 请求的模型
-   * @returns {Promise<Array>} 可用账户列表（按优先级排序）
+   * @param {string|null} stickyAccountId - 粘性会话绑定的账户ID（优先使用）
+   * @returns {Promise<Array>} 可用账户列表（粘性账户优先，其余按优先级排序）
    */
-  async _getAvailableConsoleAccounts(apiKeyData, requestedModel = null) {
+  async _getAvailableConsoleAccounts(apiKeyData, requestedModel = null, stickyAccountId = null) {
     try {
       // 使用unifiedClaudeScheduler的现有逻辑来获取Console账户
       const availableAccounts = await unifiedClaudeScheduler._getAllAvailableAccounts(
@@ -281,10 +303,62 @@ class ConsoleAccountRetryService {
       )
 
       // 🔧 按优先级排序（复用调度器的排序逻辑，确保高优先级账户先被尝试）
-      return unifiedClaudeScheduler._sortAccountsByPriority(consoleAccounts)
+      const sorted = unifiedClaudeScheduler._sortAccountsByPriority(consoleAccounts)
+
+      // 🎯 粘性会话：将绑定的账户移到列表最前面，确保优先使用以利用缓存
+      if (stickyAccountId) {
+        const stickyIndex = sorted.findIndex((acc) => acc.accountId === stickyAccountId)
+        if (stickyIndex > 0) {
+          const [stickyAccount] = sorted.splice(stickyIndex, 1)
+          sorted.unshift(stickyAccount)
+          logger.info(
+            `🎯 Sticky session: prioritized account ${stickyAccount.name} (${stickyAccountId}) for cache reuse`
+          )
+        } else if (stickyIndex === 0) {
+          logger.debug(`🎯 Sticky session: account ${stickyAccountId} already first in list`)
+        } else {
+          logger.warn(
+            `⚠️ Sticky session account ${stickyAccountId} not found in available accounts, falling back to priority order`
+          )
+        }
+      }
+
+      return sorted
     } catch (error) {
       logger.error('Failed to get available Console accounts:', error)
       return []
+    }
+  }
+
+  /**
+   * 更新粘性会话映射
+   * 请求成功后调用：如果使用的是粘性绑定的账户则刷新活跃时间；
+   * 如果是回退到其他账户，则更新映射到实际使用的账户
+   * @param {string} sessionHash - 会话哈希
+   * @param {Object} account - 实际成功使用的账户
+   * @param {string|null} stickyAccountId - 原粘性绑定的账户ID
+   */
+  async _updateStickySession(sessionHash, account, stickyAccountId) {
+    try {
+      if (account.accountId === stickyAccountId) {
+        // 使用的是粘性绑定的账户，刷新活跃时间
+        await unifiedClaudeScheduler._updateSessionActivity(sessionHash, {
+          accountId: account.accountId,
+          accountType: 'claude-console'
+        })
+      } else {
+        // 回退到了其他账户，更新映射
+        await unifiedClaudeScheduler._setSessionMapping(
+          sessionHash,
+          account.accountId,
+          'claude-console'
+        )
+        logger.info(
+          `🔄 Sticky session remapped: ${sessionHash.substring(0, 8)}... → ${account.name} (${account.accountId})`
+        )
+      }
+    } catch (error) {
+      logger.error('Failed to update sticky session mapping:', error)
     }
   }
 }
