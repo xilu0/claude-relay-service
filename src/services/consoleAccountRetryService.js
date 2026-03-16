@@ -348,11 +348,22 @@ class ConsoleAccountRetryService {
         })
       } else {
         // 回退到了其他账户，更新映射
+        // 先从旧账户的稳定会话反向索引中移除
+        if (stickyAccountId) {
+          await unifiedClaudeScheduler._removeFromStableAccountSessions(
+            stickyAccountId,
+            sessionHash
+          )
+        }
         await unifiedClaudeScheduler._setSessionMapping(
           sessionHash,
           account.accountId,
           'claude-console'
         )
+        // 如果新账户是稳定账户，添加到反向索引
+        if (account.isStableAccount) {
+          await unifiedClaudeScheduler._addToStableAccountSessions(account.accountId, sessionHash)
+        }
         logger.info(
           `🔄 Sticky session remapped: ${sessionHash.substring(0, 8)}... → ${account.name} (${account.accountId})`
         )
