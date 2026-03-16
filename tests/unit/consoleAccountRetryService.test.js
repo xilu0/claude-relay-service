@@ -17,7 +17,11 @@ jest.mock('../../src/utils/logger', () => ({
 
 jest.mock('../../src/services/unifiedClaudeScheduler', () => ({
   _getAllAvailableAccounts: jest.fn(),
-  _sortAccountsByPriority: jest.fn((accounts) => accounts)
+  _sortAccountsByPriority: jest.fn((accounts) => accounts),
+  _updateSessionActivity: jest.fn().mockResolvedValue(undefined),
+  _setSessionMapping: jest.fn().mockResolvedValue(undefined),
+  _addToStableAccountSessions: jest.fn().mockResolvedValue(undefined),
+  _removeFromStableAccountSessions: jest.fn().mockResolvedValue(undefined)
 }))
 
 jest.mock('../../src/services/claudeConsoleRelayService', () => ({
@@ -181,6 +185,71 @@ describe('ConsoleAccountRetryService', () => {
 
       expect(result).toBe(true)
       expect(mockRes.status).toHaveBeenCalledWith(200)
+    })
+  })
+
+  describe('_updateStickySession stable account reverse index', () => {
+    const stableAccount = {
+      accountId: 'stable-new',
+      accountType: 'claude-console',
+      name: 'Stable New',
+      isStableAccount: true
+    }
+
+    const sharedAccount = {
+      accountId: 'shared-new',
+      accountType: 'claude-console',
+      name: 'Shared New',
+      isStableAccount: false
+    }
+
+    const oldStickyId = 'stable-old'
+
+    test('should remove old index when remapping stable → shared account', async () => {
+      await consoleAccountRetryService._updateStickySession(
+        'session-hash-abc',
+        sharedAccount,
+        oldStickyId
+      )
+
+      // Old account's reverse index entry must be removed
+      expect(unifiedClaudeScheduler._removeFromStableAccountSessions).toHaveBeenCalledWith(
+        oldStickyId,
+        'session-hash-abc'
+      )
+      // New mapping must be created
+      expect(unifiedClaudeScheduler._setSessionMapping).toHaveBeenCalledWith(
+        'session-hash-abc',
+        sharedAccount.accountId,
+        'claude-console'
+      )
+      // Shared account is not stable — must NOT add to reverse index
+      expect(unifiedClaudeScheduler._addToStableAccountSessions).not.toHaveBeenCalled()
+    })
+
+    test('should remove old index and add new index when remapping stable → stable account', async () => {
+      await consoleAccountRetryService._updateStickySession(
+        'session-hash-def',
+        stableAccount,
+        oldStickyId
+      )
+
+      // Old account's reverse index entry must be removed
+      expect(unifiedClaudeScheduler._removeFromStableAccountSessions).toHaveBeenCalledWith(
+        oldStickyId,
+        'session-hash-def'
+      )
+      // New mapping must be created
+      expect(unifiedClaudeScheduler._setSessionMapping).toHaveBeenCalledWith(
+        'session-hash-def',
+        stableAccount.accountId,
+        'claude-console'
+      )
+      // New account is stable — must add to reverse index
+      expect(unifiedClaudeScheduler._addToStableAccountSessions).toHaveBeenCalledWith(
+        stableAccount.accountId,
+        'session-hash-def'
+      )
     })
   })
 })
